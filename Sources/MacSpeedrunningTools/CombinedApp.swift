@@ -67,7 +67,7 @@ enum ToolSection: String, CaseIterable, Identifiable {
         case .overview:
             nil
         case .nbb:
-            "A better overlay for NinjabrainBot. with the dot and connected/not connected."
+            "A better overlay for NinjabrainBot."
         case .backdrop:
             "A backdrop that goes behind your Minecraft instance."
         case .piechart:

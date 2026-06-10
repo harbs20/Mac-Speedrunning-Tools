@@ -1,4 +1,6 @@
 import AppKit
+import ApplicationServices
+import CoreGraphics
 import SwiftUI
 
 struct ToolShortcut: Codable, Equatable {
@@ -10,8 +12,22 @@ struct ToolShortcut: Codable, Equatable {
         keyCode == event.keyCode && modifiers == Self.normalizedModifiers(event.modifierFlags)
     }
 
+    func matches(_ event: CGEvent) -> Bool {
+        let eventKeyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
+        return keyCode == eventKeyCode && modifiers == Self.normalizedModifiers(event.flags)
+    }
+
     static func normalizedModifiers(_ flags: NSEvent.ModifierFlags) -> UInt {
         flags.intersection([.command, .shift, .option, .control]).rawValue
+    }
+
+    static func normalizedModifiers(_ flags: CGEventFlags) -> UInt {
+        var result = NSEvent.ModifierFlags()
+        if flags.contains(.maskCommand) { result.insert(.command) }
+        if flags.contains(.maskShift) { result.insert(.shift) }
+        if flags.contains(.maskAlternate) { result.insert(.option) }
+        if flags.contains(.maskControl) { result.insert(.control) }
+        return result.rawValue
     }
 
     static func from(event: NSEvent) -> ToolShortcut? {
@@ -36,11 +52,14 @@ struct ToolShortcut: Codable, Equatable {
 final class ToolKeybindStore: ObservableObject {
     @Published private(set) var shortcuts: [ToolSection: ToolShortcut] = [:]
     @Published var recordingSection: ToolSection?
+    @Published private(set) var needsAccessibilityPermission = false
 
     var onTrigger: ((ToolSection) -> Void)?
 
     private var localMonitor: Any?
     private var globalMonitor: Any?
+    private var eventTap: CFMachPort?
+    private var eventTapSource: CFRunLoopSource?
     private var lastTriggerTimes: [ToolSection: CFAbsoluteTime] = [:]
     private let defaults = UserDefaults.standard
     private let key = "macSpeedrunningTools.toolShortcuts.v1"
@@ -49,6 +68,7 @@ final class ToolKeybindStore: ObservableObject {
     init() {
         load()
         installMonitors()
+        installEventTap()
     }
 
     func shortcut(for section: ToolSection) -> ToolShortcut? {
@@ -80,6 +100,47 @@ final class ToolKeybindStore: ObservableObject {
         }
     }
 
+    private func installEventTap() {
+        let mask = CGEventMask(1 << CGEventType.keyDown.rawValue)
+        let userData = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
+        guard let tap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .listenOnly,
+            eventsOfInterest: mask,
+            callback: { _, type, event, userData in
+                guard type == .keyDown, let userData else {
+                    return Unmanaged.passUnretained(event)
+                }
+
+                let keyEvent = event.copy() ?? event
+                Task { @MainActor in
+                    let store = Unmanaged<ToolKeybindStore>.fromOpaque(userData).takeUnretainedValue()
+                    store.handle(keyEvent)
+                }
+
+                return Unmanaged.passUnretained(event)
+            },
+            userInfo: userData
+        ) else {
+            needsAccessibilityPermission = true
+            promptForAccessibilityPermission()
+            return
+        }
+
+        eventTap = tap
+        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        eventTapSource = source
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        CGEvent.tapEnable(tap: tap, enable: true)
+        needsAccessibilityPermission = false
+    }
+
+    private func promptForAccessibilityPermission() {
+        let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
+        _ = AXIsProcessTrustedWithOptions(options)
+    }
+
     private func handle(_ event: NSEvent) -> Bool {
         if let recordingSection {
             guard !event.isARepeat else { return false }
@@ -97,6 +158,16 @@ final class ToolKeybindStore: ObservableObject {
         guard !event.isARepeat else { return false }
         trigger(section)
         return true
+    }
+
+    private func handle(_ event: CGEvent) {
+        guard event.getIntegerValueField(.keyboardEventAutorepeat) == 0 else {
+            return
+        }
+        guard let section = shortcuts.first(where: { $0.value.matches(event) })?.key else {
+            return
+        }
+        trigger(section)
     }
 
     private func trigger(_ section: ToolSection) {
@@ -153,6 +224,12 @@ struct ToolKeybindSection: View {
                 }
                 .buttonStyle(.bordered)
                 .disabled(hub.keybinds.shortcut(for: section) == nil)
+            }
+
+            if hub.keybinds.needsAccessibilityPermission {
+                Text("Enable Accessibility permission for Mac Speedrunning Tools to use keybinds while another app is focused.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
     }

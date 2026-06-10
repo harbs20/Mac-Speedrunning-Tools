@@ -1291,6 +1291,10 @@ final class OverlayWindow: NSWindowController {
         applyBestBodyFont(preds: preds, pCols: pCols, eCols: eCols)
 
         for ri in 0..<layout.predRows {
+            guard ri < preds.count else {
+                clearPredictionRow(ri, pCols: pCols)
+                continue
+            }
             let p = preds[ri]
             for col in pCols {
                 guard let lbl = labels["p_\(ri)_\(col.key)"] else { continue }
@@ -1315,6 +1319,10 @@ final class OverlayWindow: NSWindowController {
         }
 
         for ri in 0..<layout.eyeRows {
+            guard ri < state.eyeThrows.count else {
+                clearEyeRow(ri, eCols: eCols)
+                continue
+            }
             let e = state.eyeThrows[ri]
             for col in eCols {
                 guard let lbl = labels["e_\(ri)_\(col.key)"] else { continue }
@@ -1341,6 +1349,22 @@ final class OverlayWindow: NSWindowController {
 
         renderMoveHint(preds)
         renderMessage()
+    }
+
+    private func clearPredictionRow(_ row: Int, pCols: [Col]) {
+        for col in pCols {
+            guard let lbl = labels["p_\(row)_\(col.key)"] else { continue }
+            lbl.stringValue = ""
+            lbl.textColor = NSColor(white: 0.3, alpha: 1)
+        }
+    }
+
+    private func clearEyeRow(_ row: Int, eCols: [Col]) {
+        for col in eCols {
+            guard let lbl = labels["e_\(row)_\(col.key)"] else { continue }
+            lbl.stringValue = ""
+            lbl.textColor = NSColor(white: 0.3, alpha: 1)
+        }
     }
 
     private func setPredictionAngle(_ pred: NBBState.Prediction, state: NBBState, label: NSTextField) {
@@ -1444,6 +1468,7 @@ final class OverlayWindow: NSWindowController {
         var candidates: [(String, CGFloat)] = []
 
         for ri in 0..<layout.predRows {
+            guard ri < preds.count else { continue }
             let pred = preds[ri]
             for col in pCols {
                 guard let lbl = labels["p_\(ri)_\(col.key)"] else { continue }
@@ -1452,6 +1477,7 @@ final class OverlayWindow: NSWindowController {
         }
 
         for ri in 0..<layout.eyeRows {
+            guard ri < lastState.eyeThrows.count else { continue }
             let eye = lastState.eyeThrows[ri]
             for col in eCols {
                 guard let lbl = labels["e_\(ri)_\(col.key)"] else { continue }
