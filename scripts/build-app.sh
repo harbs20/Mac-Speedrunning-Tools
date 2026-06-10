@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-APP_NAME="Mac Speedrunning Tools"
+APP_NAME="MST"
 APP_DIR="$ROOT_DIR/dist/$APP_NAME.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
@@ -13,7 +13,7 @@ swift build -c release
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR"
 
-cp "$ROOT_DIR/.build/release/MacSpeedrunningTools" "$MACOS_DIR/$APP_NAME"
+cp "$ROOT_DIR/.build/release/MST" "$MACOS_DIR/$APP_NAME"
 chmod +x "$MACOS_DIR/$APP_NAME"
 
 cat > "$CONTENTS_DIR/Info.plist" <<PLIST
@@ -25,7 +25,7 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <key>CFBundleExecutable</key>
   <string>$APP_NAME</string>
   <key>CFBundleIdentifier</key>
-  <string>com.joowon.MacSpeedrunningTools</string>
+  <string>com.joowon.MST</string>
   <key>CFBundleName</key>
   <string>$APP_NAME</string>
   <key>CFBundleDisplayName</key>

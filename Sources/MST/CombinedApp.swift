@@ -3,12 +3,12 @@ import Combine
 import SwiftUI
 
 @main
-struct MacSpeedrunningToolsApp: App {
+struct MSTApp: App {
     @NSApplicationDelegateAdaptor(CombinedAppDelegate.self) private var appDelegate
     @StateObject private var hub = ToolHub.shared
 
     var body: some Scene {
-        WindowGroup("Mac Speedrunning Tools") {
+        WindowGroup("MST") {
             RootView()
                 .environmentObject(hub)
                 .frame(minWidth: 980, minHeight: 680)
@@ -186,7 +186,7 @@ struct ComplexModeView: View {
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Mac Speedrunning Tools")
+            Text("MST")
                 .font(.system(size: 18, weight: .bold))
                 .padding(.horizontal, 14)
                 .padding(.top, 18)

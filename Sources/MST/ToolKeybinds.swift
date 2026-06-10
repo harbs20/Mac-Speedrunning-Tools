@@ -227,7 +227,7 @@ struct ToolKeybindSection: View {
             }
 
             if hub.keybinds.needsAccessibilityPermission {
-                Text("Enable Accessibility permission for Mac Speedrunning Tools to use keybinds while another app is focused.")
+                Text("Enable Accessibility permission for MST to use keybinds while another app is focused.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

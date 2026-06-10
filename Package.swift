@@ -3,17 +3,17 @@
 import PackageDescription
 
 let package = Package(
-    name: "MacSpeedrunningTools",
+    name: "MST",
     platforms: [
         .macOS(.v14)
     ],
     products: [
-        .executable(name: "MacSpeedrunningTools", targets: ["MacSpeedrunningTools"])
+        .executable(name: "MST", targets: ["MST"])
     ],
     targets: [
         .executableTarget(
-            name: "MacSpeedrunningTools",
-            path: "Sources/MacSpeedrunningTools"
+            name: "MST",
+            path: "Sources/MST"
         )
     ]
 )
