@@ -2,18 +2,31 @@ import AppKit
 import Combine
 import SwiftUI
 
+private struct WindowBackdropPersistedSettings: Codable {
+    var backgroundColorHex: String
+    var emptyZoneColorHex: String
+    var imageURLString: String?
+    var imageFitMode: ImageFitMode
+    var opacity: Double
+    var blurRadius: Double
+    var coverMenuBar: Bool
+}
+
 @MainActor
 final class WindowBackdropState: ObservableObject {
+    private static let settingsKey = "macSpeedrunningTools.windowBackdrop.settings.v1"
+
     @Published var windows: [TrackedWindow] = []
     @Published var activeWindow: TrackedWindow?
-    @Published var backgroundColor = Color(red: 0.08, green: 0.11, blue: 0.13)
-    @Published var emptyZoneColor = Color.black
-    @Published var imageURL: URL?
-    @Published var imageFitMode = ImageFitMode.keepAspectRatio
-    @Published var opacity = 1.0
-    @Published var blurRadius = 0.0
-    @Published var coverMenuBar = false
+    @Published var backgroundColor = Color(red: 0.08, green: 0.11, blue: 0.13) { didSet { persistSettings() } }
+    @Published var emptyZoneColor = Color.black { didSet { persistSettings() } }
+    @Published var imageURL: URL? { didSet { persistSettings() } }
+    @Published var imageFitMode = ImageFitMode.keepAspectRatio { didSet { persistSettings() } }
+    @Published var opacity = 1.0 { didSet { persistSettings() } }
+    @Published var blurRadius = 0.0 { didSet { persistSettings() } }
+    @Published var coverMenuBar = false { didSet { persistSettings() } }
     @Published var status = "Press Start, then click any window. The rest of that display becomes the backdrop."
+    @Published private(set) var isBackdropVisible = false
     @Published var isBackdropEnabled = false {
         didSet { isBackdropEnabled ? startBackdrop() : stopBackdrop() }
     }
@@ -22,8 +35,11 @@ final class WindowBackdropState: ObservableObject {
     private let backdropController = BackdropWindowController()
     private var cancellables: Set<AnyCancellable> = []
     private var syncTimer: Timer?
+    private var isLoadingSettings = false
 
     init() {
+        loadSettings()
+
         tracker.$windows
             .receive(on: DispatchQueue.main)
             .sink { [weak self] windows in
@@ -59,7 +75,17 @@ final class WindowBackdropState: ObservableObject {
         isBackdropEnabled.toggle()
     }
 
+    func toggleBackdropVisibility() {
+        guard isBackdropEnabled else { return }
+        if isBackdropVisible {
+            hideBackdrop()
+        } else {
+            showBackdrop()
+        }
+    }
+
     private func startBackdrop() {
+        isBackdropVisible = true
         syncTimer?.invalidate()
         syncTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
@@ -76,11 +102,29 @@ final class WindowBackdropState: ObservableObject {
     private func stopBackdrop() {
         syncTimer?.invalidate()
         syncTimer = nil
-        backdropController.close()
+        hideBackdrop()
         status = "Backdrop stopped."
     }
 
+    private func showBackdrop() {
+        isBackdropVisible = true
+        syncToFrontmostWindow()
+    }
+
+    private func hideBackdrop() {
+        isBackdropVisible = false
+        backdropController.close()
+        if isBackdropEnabled {
+            status = "Backdrop hidden. The tracker is still running."
+        }
+    }
+
     private func syncToFrontmostWindow() {
+        guard isBackdropVisible else {
+            status = "Backdrop hidden. The tracker is still running."
+            return
+        }
+
         guard let window = tracker.frontmostWindow() else {
             status = activeWindow == nil
                 ? "No target window found. Click a normal app window."
@@ -108,5 +152,49 @@ final class WindowBackdropState: ObservableObject {
             coverMenuBar: coverMenuBar
         )
         backdropController.show(behind: window, configuration: configuration)
+    }
+
+    private func loadSettings() {
+        guard let data = UserDefaults.standard.data(forKey: Self.settingsKey),
+              let settings = try? JSONDecoder().decode(WindowBackdropPersistedSettings.self, from: data)
+        else { return }
+
+        isLoadingSettings = true
+        defer { isLoadingSettings = false }
+
+        if let color = NSColor.fromHex(settings.backgroundColorHex) {
+            backgroundColor = Color(nsColor: color)
+        }
+        if let color = NSColor.fromHex(settings.emptyZoneColorHex) {
+            emptyZoneColor = Color(nsColor: color)
+        }
+        if let imageURLString = settings.imageURLString {
+            imageURL = URL(fileURLWithPath: imageURLString)
+        } else {
+            imageURL = nil
+        }
+        imageFitMode = settings.imageFitMode
+        opacity = settings.opacity
+        blurRadius = settings.blurRadius
+        coverMenuBar = settings.coverMenuBar
+    }
+
+    private func persistSettings() {
+        guard !isLoadingSettings else { return }
+
+        let settings = WindowBackdropPersistedSettings(
+            backgroundColorHex: NSColor(backgroundColor).hexString,
+            emptyZoneColorHex: NSColor(emptyZoneColor).hexString,
+            imageURLString: imageURL?.path,
+            imageFitMode: imageFitMode,
+            opacity: opacity,
+            blurRadius: blurRadius,
+            coverMenuBar: coverMenuBar
+        )
+
+        guard let data = try? JSONEncoder().encode(settings) else { return }
+        let defaults = UserDefaults.standard
+        defaults.set(data, forKey: Self.settingsKey)
+        defaults.synchronize()
     }
 }

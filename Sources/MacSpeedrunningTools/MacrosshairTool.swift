@@ -41,6 +41,7 @@ final class CrosshairSettings: ObservableObject {
         defaults.set(Double(opacity), forKey: Key.opacity)
         defaults.set(Double(offsetX), forKey: Key.offsetX)
         defaults.set(Double(offsetY), forKey: Key.offsetY)
+        defaults.synchronize()
     }
 
     private func load() {
@@ -109,17 +110,38 @@ final class CrosshairView: NSView {
 
 @MainActor
 final class MacrosshairController: ObservableObject {
+    @Published var isEnabled = false
     @Published var isVisible = false
     let settings = CrosshairSettings()
 
     private var overlayWindow: NSWindow?
     private var crosshairView: CrosshairView?
 
+    func toggleTool() {
+        isEnabled ? stop() : start()
+    }
+
+    func start() {
+        isEnabled = true
+        setVisible(false)
+    }
+
+    func stop() {
+        setVisible(false)
+        isEnabled = false
+    }
+
     func setVisible(_ visible: Bool) {
+        guard isEnabled || !visible else { return }
         visible ? show() : hide()
     }
 
     func toggle() {
+        toggleTool()
+    }
+
+    func toggleVisibility() {
+        guard isEnabled else { return }
         setVisible(!isVisible)
     }
 

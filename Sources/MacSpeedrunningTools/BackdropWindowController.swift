@@ -133,7 +133,7 @@ private struct BackdropContentView: View {
     }
 
     private var backgroundColor: NSColor {
-        configuration.imageFitMode == .keepAspectRatio
+        configuration.imageURL != nil && configuration.imageFitMode == .keepAspectRatio
             ? configuration.emptyZoneColor
             : configuration.color
     }

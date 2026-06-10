@@ -4,9 +4,11 @@ import SwiftUI
 @MainActor
 final class BetterNBBToolController: ObservableObject, @preconcurrency SSEClientDelegate, @preconcurrency InformationMessageClientDelegate {
     @Published var isEnabled = false
+    @Published var isVisible = false
     @Published var isConnected = false
     @Published var config = OverlayConfig.load()
     @Published var placementMode = false
+    let version = "1.3.0"
 
     private var overlay: OverlayWindow?
     private let sse = SSEClient()
@@ -22,7 +24,48 @@ final class BetterNBBToolController: ObservableObject, @preconcurrency SSEClient
         isEnabled ? stop() : start()
     }
 
+    func toggleVisibility() {
+        guard isEnabled else { return }
+        if isVisible {
+            hideOverlay()
+        } else {
+            showOverlay()
+        }
+    }
+
     func start() {
+        ensureOverlay()
+        startConnections()
+        isEnabled = true
+        showOverlay()
+    }
+
+    func stop() {
+        refreshTimer?.invalidate()
+        refreshTimer = nil
+        sse.disconnect()
+        messages.disconnect()
+        hideOverlay()
+        isEnabled = false
+        isConnected = false
+    }
+
+    private func showOverlay() {
+        guard isEnabled else { return }
+        ensureOverlay()
+        overlay?.reconfigure(config)
+        overlay?.rebuildLayout()
+        overlay?.show()
+        isVisible = true
+    }
+
+    private func hideOverlay() {
+        overlay?.hide()
+        isVisible = false
+        placementMode = false
+    }
+
+    private func ensureOverlay() {
         if overlay == nil {
             overlay = OverlayWindow(cfg: config)
             overlay?.onPlacementRectChanged = { [weak self] rect in
@@ -31,26 +74,15 @@ final class BetterNBBToolController: ObservableObject, @preconcurrency SSEClient
                 }
             }
         }
-        overlay?.reconfigure(config)
-        overlay?.rebuildLayout()
-        overlay?.show()
+    }
+
+    private func startConnections() {
         sse.connect()
         messages.connect()
         refreshTimer?.invalidate()
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 0.20, repeats: true) { [weak self] _ in
             self?.sse.fetchSnapshot()
         }
-        isEnabled = true
-    }
-
-    func stop() {
-        refreshTimer?.invalidate()
-        refreshTimer = nil
-        sse.disconnect()
-        messages.disconnect()
-        overlay?.hide()
-        isEnabled = false
-        isConnected = false
     }
 
     func updateConfig(_ apply: (inout OverlayConfig) -> Void) {
@@ -62,6 +94,7 @@ final class BetterNBBToolController: ObservableObject, @preconcurrency SSEClient
     func setPlacementMode(_ enabled: Bool) {
         placementMode = enabled
         if !isEnabled { start() }
+        if enabled && !isVisible { showOverlay() }
         overlay?.setPlacementMode(enabled)
         overlay?.rebuildLayout()
     }
@@ -94,7 +127,7 @@ struct BetterNBBSettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Header(title: "BetterNBB", subtitle: controller.isConnected ? "Connected to Ninjabrain Bot." : "Waiting for Ninjabrain Bot data.")
+            Header(title: "BetterNBB", subtitle: "\(ToolSection.nbb.description ?? "") \(controller.isConnected ? "Connected." : "Not connected.")")
 
             Button {
                 controller.toggle()
@@ -102,6 +135,8 @@ struct BetterNBBSettingsView: View {
                 Label(controller.isEnabled ? "Stop BetterNBB" : "Start BetterNBB", systemImage: controller.isEnabled ? "stop.fill" : "play.fill")
             }
             .buttonStyle(PrimaryMonoButtonStyle(active: controller.isEnabled))
+
+            ToolKeybindSection(section: .nbb)
 
             SectionBox(title: "Overlay Position") {
                 HStack {
@@ -188,13 +223,15 @@ struct WindowBackdropSettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Header(title: "WindowBackdrop", subtitle: state.activeWindow?.displayName ?? "Cover everything except the active target window.")
+            Header(title: "WindowBackdrop", subtitle: ToolSection.backdrop.description)
             Button {
                 state.startOrStopBackdrop()
             } label: {
                 Label(state.isBackdropEnabled ? "Stop Backdrop" : "Start Backdrop", systemImage: state.isBackdropEnabled ? "stop.fill" : "play.fill")
             }
             .buttonStyle(PrimaryMonoButtonStyle(active: state.isBackdropEnabled))
+
+            ToolKeybindSection(section: .backdrop)
 
             SectionBox(title: "Backdrop") {
                 ColorPicker("Color", selection: $state.backgroundColor, supportsOpacity: false)
@@ -244,13 +281,15 @@ struct MacrosshairSettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Header(title: "MACrosshair", subtitle: "Screen-level crosshair overlay controls.")
+            Header(title: "MACrosshair", subtitle: ToolSection.crosshair.description)
             Button {
-                controller.toggle()
+                controller.toggleTool()
             } label: {
-                Label(controller.isVisible ? "Hide Crosshair" : "Show Crosshair", systemImage: "scope")
+                Label(controller.isEnabled ? "Stop Crosshair" : "Start Crosshair", systemImage: controller.isEnabled ? "stop.fill" : "scope")
             }
-            .buttonStyle(PrimaryMonoButtonStyle(active: controller.isVisible))
+            .buttonStyle(PrimaryMonoButtonStyle(active: controller.isEnabled))
+
+            ToolKeybindSection(section: .crosshair)
 
             SectionBox(title: "Color") {
                 HStack {

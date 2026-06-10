@@ -1,10 +1,11 @@
 import AppKit
+import Combine
 import SwiftUI
 
 @main
 struct MacSpeedrunningToolsApp: App {
     @NSApplicationDelegateAdaptor(CombinedAppDelegate.self) private var appDelegate
-    @StateObject private var hub = ToolHub()
+    @StateObject private var hub = ToolHub.shared
 
     var body: some Scene {
         WindowGroup("Mac Speedrunning Tools") {
@@ -20,14 +21,25 @@ struct MacSpeedrunningToolsApp: App {
     }
 }
 
+@MainActor
 final class CombinedAppDelegate: NSObject, NSApplicationDelegate {
+    private let hub = ToolHub.shared
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        _ = hub
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            sender.windows.forEach { $0.makeKeyAndOrderFront(nil) }
+        }
+        return true
     }
 }
 
@@ -49,10 +61,27 @@ enum ToolSection: String, CaseIterable, Identifiable {
         case .crosshair: "scope"
         }
     }
+
+    var description: String? {
+        switch self {
+        case .overview:
+            nil
+        case .nbb:
+            "A better overlay for NinjabrainBot. with the dot and connected/not connected."
+        case .backdrop:
+            "A backdrop that goes behind your Minecraft instance."
+        case .piechart:
+            "A piechart overlay that makes the piechart round. :)"
+        case .crosshair:
+            "Draws a crosshair on the screen."
+        }
+    }
 }
 
 @MainActor
 final class ToolHub: ObservableObject {
+    static let shared = ToolHub()
+
     @Published var selection: ToolSection = .overview
     @Published var simpleMode = false
 
@@ -60,6 +89,31 @@ final class ToolHub: ObservableObject {
     @Published var backdrop = WindowBackdropState()
     @Published var piechart = PiechartState()
     @Published var crosshair = MacrosshairController()
+    @Published var keybinds = ToolKeybindStore()
+
+    private var cancellables: Set<AnyCancellable> = []
+
+    init() {
+        keybinds.onTrigger = { [weak self] section in
+            self?.triggerShortcut(section)
+        }
+
+        for publisher in [
+            nbb.objectWillChange.eraseToAnyPublisher(),
+            backdrop.objectWillChange.eraseToAnyPublisher(),
+            piechart.objectWillChange.eraseToAnyPublisher(),
+            crosshair.objectWillChange.eraseToAnyPublisher(),
+            keybinds.objectWillChange.eraseToAnyPublisher()
+        ] {
+            publisher
+                .sink { [weak self] _ in
+                    DispatchQueue.main.async {
+                        self?.objectWillChange.send()
+                    }
+                }
+                .store(in: &cancellables)
+        }
+    }
 
     func isEnabled(_ section: ToolSection) -> Bool {
         switch section {
@@ -67,7 +121,7 @@ final class ToolHub: ObservableObject {
         case .nbb: nbb.isEnabled
         case .backdrop: backdrop.isBackdropEnabled
         case .piechart: piechart.isLive
-        case .crosshair: crosshair.isVisible
+        case .crosshair: crosshair.isEnabled
         }
     }
 
@@ -80,9 +134,24 @@ final class ToolHub: ObservableObject {
         case .backdrop:
             backdrop.startOrStopBackdrop()
         case .piechart:
-            piechart.toggleLive()
+            piechart.toggleProjector()
         case .crosshair:
-            crosshair.toggle()
+            crosshair.toggleTool()
+        }
+    }
+
+    func triggerShortcut(_ section: ToolSection) {
+        switch section {
+        case .overview:
+            break
+        case .nbb:
+            nbb.toggleVisibility()
+        case .backdrop:
+            backdrop.toggleBackdropVisibility()
+        case .piechart:
+            piechart.toggleProjectorVisibility()
+        case .crosshair:
+            crosshair.toggleVisibility()
         }
     }
 }
@@ -141,6 +210,8 @@ struct ComplexModeView: View {
                     .font(.system(size: 13, weight: .semibold))
                     .padding(.vertical, 9)
                     .padding(.horizontal, 12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
                     .background(hub.selection == section ? Color.white : Color.clear)
                     .foregroundStyle(hub.selection == section ? Color.black : Color.white)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -227,22 +298,6 @@ struct SimpleModeView: View {
                     .buttonStyle(.plain)
                 }
 
-                Button {
-                    hub.simpleMode = false
-                } label: {
-                    VStack(spacing: 10) {
-                        Image(systemName: "sidebar.left")
-                            .font(.system(size: 28, weight: .semibold))
-                        Text("All Settings")
-                            .font(.system(size: 15, weight: .bold))
-                        Text("Open")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 136)
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white, lineWidth: 1))
-                }
-                .buttonStyle(.plain)
             }
             .frame(maxWidth: 620)
         }
@@ -256,7 +311,7 @@ struct OverviewView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Header(title: "Overview", subtitle: "Four speedrunning utilities in one black-and-white control surface.")
+            Header(title: "Overview")
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), spacing: 12)], spacing: 12) {
                 ForEach(ToolSection.allCases.filter { $0 != .overview }) { section in
                     ToolCard(section: section, isOn: hub.isEnabled(section)) {
@@ -284,6 +339,12 @@ struct ToolCard: View {
             }
             Text(section.rawValue)
                 .font(.system(size: 18, weight: .bold))
+            if let description = section.description {
+                Text(description)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             Button(isOn ? "Turn Off" : "Turn On", action: action)
                 .buttonStyle(PrimaryMonoButtonStyle(active: isOn))
         }
@@ -296,14 +357,16 @@ struct ToolCard: View {
 
 struct Header: View {
     let title: String
-    let subtitle: String
+    var subtitle: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
                 .font(.system(size: 30, weight: .black))
-            Text(subtitle)
-                .foregroundStyle(.secondary)
+            if let subtitle, !subtitle.isEmpty {
+                Text(subtitle)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 }

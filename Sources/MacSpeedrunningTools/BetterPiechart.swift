@@ -64,6 +64,7 @@ struct PersistedSettings: Codable {
     var projectorAlwaysOnTop: Bool
     var projectorShowTitlebar: Bool
     var projectorTriggerMode: String
+    var projectorFrame: PersistedRect?
     var pieRegion: PersistedRect?
     var templateHeightRatio: Double
     var cropSize: Double
@@ -85,9 +86,11 @@ final class PiechartState: ObservableObject {
     private static let defaultStretchMultiplier = 1.00
 
     @Published var isLive = false
+    @Published private(set) var isProjectorVisible = false
     @Published var projectorAlwaysOnTop = true
     @Published var projectorShowTitlebar = false
     @Published var projectorTriggerMode: ProjectorTriggerMode = .autoPiechartDetection
+    @Published var projectorFrame: CGRect?
     @Published var pieRegion: ScreenRegion?
     @Published var templateHeightRatio = PiechartState.defaultTemplateHeightRatio
     @Published var cropSize = PiechartState.defaultCropSize
@@ -103,10 +106,15 @@ final class PiechartState: ObservableObject {
     private let alignmentWindow = PieAlignmentWindowController()
     private var liveTimer: Timer?
     private var isProcessingFrame = false
-    private var localKeyMonitor: Any?
-    private var globalKeyMonitor: Any?
+    private var captureGeneration = 0
     private var projectorToggleKeyCode: UInt16?
     private var keybindProjectorEnabled = false
+
+    var primaryToggleTitle: String {
+        if isLive { return "Stop" }
+        if pieRegion == nil { return "Select Pie" }
+        return "Start"
+    }
 
     init() {
         alignmentWindow.onContentFrameChange = { [weak self] rect in
@@ -119,13 +127,37 @@ final class PiechartState: ObservableObject {
                 }
             }
         }
+        projector.onFrameChange = { [weak self] frame in
+            self?.projectorFrame = frame
+            self?.persistSettings()
+        }
         loadPersistedSettings()
+        projectorTriggerMode = .autoPiechartDetection
+        keybindProjectorEnabled = true
         alignmentWindow.updateTemplateHeightRatio(templateHeightRatio)
-        installKeyMonitors()
     }
 
     func toggleLive() {
         isLive ? stopLive() : startLive()
+    }
+
+    func toggleProjector() {
+        if isLive {
+            stopLive()
+        } else if pieRegion == nil {
+            selectPieRegion()
+        } else {
+            startLive()
+        }
+    }
+
+    func toggleProjectorVisibility() {
+        guard isLive else { return }
+        isProjectorVisible.toggle()
+        projector.setVisible(isProjectorVisible)
+        statusText = isProjectorVisible
+            ? "Projector visible. Capture is running."
+            : "Projector hidden. Capture is still running."
     }
 
     func setProjectorAlwaysOnTop(_ value: Bool) {
@@ -145,9 +177,11 @@ final class PiechartState: ObservableObject {
         if value == .autoPiechartDetection {
             awaitingKeybindCapture = false
             keybindProjectorEnabled = true
-            projector.setVisible(projectorModel.correctedImage != nil)
+            isProjectorVisible = isLive
+            projector.setVisible(isProjectorVisible)
         } else {
             keybindProjectorEnabled = false
+            isProjectorVisible = false
             projector.setVisible(false)
         }
         persistSettings()
@@ -201,15 +235,11 @@ final class PiechartState: ObservableObject {
         rawPreview = nil
         correctedPreview = nil
         projectorModel.correctedImage = nil
+        isProjectorVisible = false
         projector.setVisible(false)
         alignmentWindow.hide()
         persistSettings()
         statusText = "Cleared the pie area."
-    }
-
-    func beginKeybindCapture() {
-        awaitingKeybindCapture = true
-        statusText = "Press the key you want to use for projector toggle."
     }
 
     func startLive() {
@@ -223,30 +253,33 @@ final class PiechartState: ObservableObject {
             return
         }
 
-        if projectorTriggerMode == .keybindToggle, projectorToggleKeyCode == nil {
-            statusText = "Set a projector toggle keybind first."
-            return
-        }
-
         alignmentWindow.hide()
         projector.show(
             model: projectorModel,
             alwaysOnTop: projectorAlwaysOnTop,
-            showTitlebar: projectorShowTitlebar
+            showTitlebar: projectorShowTitlebar,
+            initialFrame: projectorFrame
         )
+        if projectorModel.correctedImage == nil {
+            projectorModel.correctedImage = correctedPreview
+        }
         isLive = true
-        keybindProjectorEnabled = projectorTriggerMode == .autoPiechartDetection
+        captureGeneration += 1
+        keybindProjectorEnabled = true
+        isProjectorVisible = false
         projector.setVisible(false)
-        statusText = "Watching the selected pie area at 30 Hz."
+        statusText = "Capture started hidden. Press its keybind to show the projector."
         liveTick()
         scheduleLiveTimer()
     }
 
     func stopLive() {
         isLive = false
+        captureGeneration += 1
         liveTimer?.invalidate()
         liveTimer = nil
         isProcessingFrame = false
+        isProjectorVisible = false
         projector.setVisible(false)
         statusText = "Stopped."
     }
@@ -270,6 +303,7 @@ final class PiechartState: ObservableObject {
         let cropSize = cropSize
         let templateHeightRatio = templateHeightRatio
         let stretchMultiplier = stretchMultiplier
+        let generation = captureGeneration
 
         Task { [weak self] in
             let detection = await Task.detached(priority: .userInitiated) { () -> DetectionFrame? in
@@ -298,42 +332,39 @@ final class PiechartState: ObservableObject {
 
             await MainActor.run {
                 guard let self else { return }
-                self.finishFrame(detection)
+                self.finishFrame(detection, generation: generation)
             }
         }
     }
 
-    private func finishFrame(_ detection: DetectionFrame?) {
-        defer { isProcessingFrame = false }
+    private func finishFrame(_ detection: DetectionFrame?, generation: Int) {
+        defer {
+            if generation == captureGeneration {
+                isProcessingFrame = false
+            }
+        }
+
+        guard isLive, generation == captureGeneration else {
+            return
+        }
 
         guard let detection else {
             statusText = "Live capture failed. Check Screen Recording permission."
             rawPreview = nil
             correctedPreview = nil
             projectorModel.correctedImage = nil
-            projector.setVisible(false)
+            projector.setVisible(isProjectorVisible)
             return
         }
 
         rawPreview = detection.frame.rawImage
         correctedPreview = detection.frame.correctedImage
+        projectorModel.correctedImage = detection.frame.correctedImage
 
-        if detection.visibilityScore >= 0.58 {
-            projectorModel.correctedImage = detection.frame.correctedImage
-            let shouldShowProjector: Bool
-            switch projectorTriggerMode {
-            case .autoPiechartDetection:
-                shouldShowProjector = true
-            case .keybindToggle:
-                shouldShowProjector = keybindProjectorEnabled
-            }
-            projector.setVisible(shouldShowProjector)
-            statusText = "Piechart detected."
-        } else {
-            projectorModel.correctedImage = nil
-            projector.setVisible(false)
-            statusText = "No piechart visible."
-        }
+        projector.setVisible(isProjectorVisible)
+        statusText = detection.visibilityScore >= 0.58
+            ? "Piechart detected."
+            : "Projector running. Adjust the selected pie area if the circle looks wrong."
     }
 
     private func refreshFromCurrentPreview() {
@@ -351,56 +382,6 @@ final class PiechartState: ObservableObject {
         statusText = "Updated the circle fit."
     }
 
-    private func installKeyMonitors() {
-        localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self else { return event }
-            if self.handleKeyEvent(event) {
-                return nil
-            }
-            return event
-        }
-
-        globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            Task { @MainActor in
-                _ = self?.handleKeyEvent(event)
-            }
-        }
-    }
-
-    @discardableResult
-    private func handleKeyEvent(_ event: NSEvent) -> Bool {
-        if awaitingKeybindCapture {
-            awaitingKeybindCapture = false
-            projectorToggleKeyCode = event.keyCode
-            keybindLabel = Self.keyDescription(for: event)
-            persistSettings()
-            statusText = "Saved keybind \(keybindLabel)."
-            return true
-        }
-
-        guard isLive,
-              projectorTriggerMode == .keybindToggle,
-              let projectorToggleKeyCode,
-              event.keyCode == projectorToggleKeyCode,
-              !event.isARepeat else {
-            return false
-        }
-
-        keybindProjectorEnabled.toggle()
-        let shouldShow = keybindProjectorEnabled && projectorModel.correctedImage != nil
-        projector.setVisible(shouldShow)
-        statusText = keybindProjectorEnabled ? "Projector toggled on." : "Projector toggled off."
-        return true
-    }
-
-    private static func keyDescription(for event: NSEvent) -> String {
-        if let text = event.charactersIgnoringModifiers?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !text.isEmpty {
-            return text.uppercased()
-        }
-        return "Key \(event.keyCode)"
-    }
-
     private func loadPersistedSettings() {
         guard let data = UserDefaults.standard.data(forKey: Self.settingsKey),
               let settings = try? JSONDecoder().decode(PersistedSettings.self, from: data) else {
@@ -409,9 +390,8 @@ final class PiechartState: ObservableObject {
 
         projectorAlwaysOnTop = settings.projectorAlwaysOnTop
         projectorShowTitlebar = settings.projectorShowTitlebar
-        if let mode = ProjectorTriggerMode(rawValue: settings.projectorTriggerMode) {
-            projectorTriggerMode = mode
-        }
+        projectorTriggerMode = .autoPiechartDetection
+        projectorFrame = settings.projectorFrame?.cgRect
         if let pieRegion = settings.pieRegion {
             self.pieRegion = ScreenRegion(rect: pieRegion.cgRect)
         }
@@ -419,25 +399,28 @@ final class PiechartState: ObservableObject {
         cropSize = settings.cropSize
         stretchMultiplier = settings.stretchMultiplier
         projectorToggleKeyCode = settings.projectorToggleKeyCode
-        keybindLabel = settings.keybindLabel
-        keybindProjectorEnabled = projectorTriggerMode == .autoPiechartDetection
+        keybindLabel = "Not set"
+        keybindProjectorEnabled = true
     }
 
     private func persistSettings() {
         let settings = PersistedSettings(
             projectorAlwaysOnTop: projectorAlwaysOnTop,
             projectorShowTitlebar: projectorShowTitlebar,
-            projectorTriggerMode: projectorTriggerMode.rawValue,
+            projectorTriggerMode: ProjectorTriggerMode.autoPiechartDetection.rawValue,
+            projectorFrame: projector.frame.map { PersistedRect($0) } ?? projectorFrame.map { PersistedRect($0) },
             pieRegion: pieRegion.map { PersistedRect($0.rect) },
             templateHeightRatio: templateHeightRatio,
             cropSize: cropSize,
             stretchMultiplier: stretchMultiplier,
             projectorToggleKeyCode: projectorToggleKeyCode,
-            keybindLabel: keybindLabel
+            keybindLabel: "Not set"
         )
 
         guard let data = try? JSONEncoder().encode(settings) else { return }
-        UserDefaults.standard.set(data, forKey: Self.settingsKey)
+        let defaults = UserDefaults.standard
+        defaults.set(data, forKey: Self.settingsKey)
+        defaults.synchronize()
     }
 
     private static func desktopBounds() -> CGRect {
@@ -753,12 +736,16 @@ struct BetterPiechartToolView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Button(action: state.toggleLive) {
-                Label(state.isLive ? "Stop" : "Start", systemImage: state.isLive ? "stop.fill" : "play.fill")
+            Header(title: "Better Piechart", subtitle: ToolSection.piechart.description)
+
+            Button(action: state.toggleProjector) {
+                Label(state.primaryToggleTitle, systemImage: state.isLive ? "stop.fill" : "play.fill")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
+
+            ToolKeybindSection(section: .piechart)
 
             Toggle("Better Piechart Projector Always On Top", isOn: Binding(
                 get: { state.projectorAlwaysOnTop },
@@ -774,34 +761,6 @@ struct BetterPiechartToolView: View {
                 Text("Turn this on to move and position the projector.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            }
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Projector Trigger")
-                    .font(.headline)
-
-                Picker("Projector Trigger", selection: Binding(
-                    get: { state.projectorTriggerMode },
-                    set: { state.setProjectorTriggerMode($0) }
-                )) {
-                    ForEach(ProjectorTriggerMode.allCases) { mode in
-                        Text(mode.title).tag(mode)
-                    }
-                }
-                .pickerStyle(.menu)
-
-                if state.projectorTriggerMode == .keybindToggle {
-                    HStack {
-                        Text("Keybind")
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Text(state.keybindLabel)
-                            .font(.system(.body, design: .monospaced))
-                        Button(state.awaitingKeybindCapture ? "Press a key..." : "Set Keybind") {
-                            state.beginKeybindCapture()
-                        }
-                    }
-                }
             }
 
             VStack(alignment: .leading, spacing: 8) {
@@ -1016,6 +975,10 @@ struct ProjectedPieView: View {
                         .scaledToFit()
                         .frame(width: side, height: side)
                         .clipShape(Circle())
+                } else {
+                    Circle()
+                        .stroke(Color.white.opacity(0.72), lineWidth: 2)
+                        .frame(width: side, height: side)
                 }
             }
         }
@@ -1043,22 +1006,26 @@ final class ProjectorWindowController: NSObject, NSWindowDelegate {
     private weak var model: ProjectorModel?
     private var alwaysOnTop = true
     private var showTitlebar = false
+    var onFrameChange: ((CGRect) -> Void)?
 
     var frame: CGRect? { window?.frame }
 
-    func show(model: ProjectorModel, alwaysOnTop: Bool, showTitlebar: Bool) {
+    func show(model: ProjectorModel, alwaysOnTop: Bool, showTitlebar: Bool, initialFrame: CGRect? = nil) {
         self.model = model
         self.alwaysOnTop = alwaysOnTop
         self.showTitlebar = showTitlebar
 
-        rebuildWindowIfNeeded()
+        rebuildWindowIfNeeded(initialFrame: initialFrame)
 
         applyWindowLevel()
 
-        if window?.isVisible != true {
+        if window?.isVisible != true && initialFrame == nil {
             window?.center()
         }
         window?.orderFrontRegardless()
+        if let frame = window?.frame {
+            onFrameChange?(frame)
+        }
     }
 
     func setAlwaysOnTop(_ value: Bool) {
@@ -1085,12 +1052,24 @@ final class ProjectorWindowController: NSObject, NSWindowDelegate {
         window = nil
     }
 
+    func windowDidMove(_ notification: Notification) {
+        if let frame = window?.frame {
+            onFrameChange?(frame)
+        }
+    }
+
+    func windowDidResize(_ notification: Notification) {
+        if let frame = window?.frame {
+            onFrameChange?(frame)
+        }
+    }
+
     private func applyWindowLevel() {
         guard let window else { return }
         window.level = alwaysOnTop ? .statusBar : .normal
     }
 
-    private func rebuildWindowIfNeeded() {
+    private func rebuildWindowIfNeeded(initialFrame: CGRect? = nil) {
         guard let model else { return }
         let preserveFrame = window?.frame
         let wasVisible = window?.isVisible ?? false
@@ -1099,7 +1078,7 @@ final class ProjectorWindowController: NSObject, NSWindowDelegate {
         window?.orderOut(nil)
 
         let screenFrame = NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1200, height: 800)
-        let defaultFrame = preserveFrame ?? CGRect(
+        let defaultFrame = preserveFrame ?? initialFrame ?? CGRect(
             x: screenFrame.midX - 190,
             y: screenFrame.midY - 170,
             width: 380,

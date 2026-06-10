@@ -1,4 +1,4 @@
-enum ImageFitMode: String, CaseIterable, Identifiable {
+enum ImageFitMode: String, CaseIterable, Identifiable, Codable {
     case keepAspectRatio
     case keepAspectRatioAndFillScreen
     case fitEntireImage
