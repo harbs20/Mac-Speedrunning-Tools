@@ -158,6 +158,7 @@ final class ToolHub: ObservableObject {
 
 struct RootView: View {
     @EnvironmentObject private var hub: ToolHub
+    @StateObject private var setupAssistant = SetupAssistantController()
 
     var body: some View {
         Group {
@@ -170,6 +171,173 @@ struct RootView: View {
         .background(Color.black)
         .foregroundStyle(Color.white)
         .tint(.white)
+        .overlay(alignment: .topTrailing) {
+            if setupAssistant.isPresented {
+                SetupAssistantPopup(
+                    step: setupAssistant.currentStep,
+                    nextAction: advanceSetupAssistant,
+                    skipAction: advanceSetupAssistant,
+                    skipAllAction: setupAssistant.skipAll
+                )
+                .padding(.top, 22)
+                .padding(.trailing, 22)
+            }
+        }
+    }
+
+    private func advanceSetupAssistant() {
+        let nextSection = setupAssistant.advance()
+        selectSetupSection(nextSection)
+    }
+
+    private func selectSetupSection(_ section: ToolSection?) {
+        guard let section else { return }
+        hub.simpleMode = false
+        hub.selection = section
+    }
+}
+
+struct SetupAssistantStep: Identifiable, Equatable {
+    let id: String
+    let section: ToolSection?
+    let bodyText: String
+}
+
+@MainActor
+final class SetupAssistantController: ObservableObject {
+    private static let completedKey = "macSpeedrunningTools.setupAssistant.completed.v1"
+
+    @Published var isPresented: Bool
+    @Published private var stepIndex = 0
+
+    private let steps: [SetupAssistantStep] = [
+        SetupAssistantStep(
+            id: "intro",
+            section: nil,
+            bodyText: "Familiarize with the MST UI."
+        ),
+        SetupAssistantStep(
+            id: "betternbb",
+            section: .nbb,
+            bodyText: "BetterNBB: set your overlay template position with Place Overlay Template, then tune Window Style so the overlay matches your setup."
+        ),
+        SetupAssistantStep(
+            id: "windowbackdrop",
+            section: .backdrop,
+            bodyText: "WindowBackdrop: choose a background color or pick an image in the Backdrop section. If you use an image, check the fit mode before starting."
+        ),
+        SetupAssistantStep(
+            id: "better-piechart",
+            section: .piechart,
+            bodyText: "Better Piechart: set a keybind, select the pie area, start the simulation, press the hotkey to show the projector, then adjust Projector Fit until the pie is round."
+        ),
+        SetupAssistantStep(
+            id: "macrosshair",
+            section: .crosshair,
+            bodyText: "MACrosshair: set a keybind for showing and hiding the crosshair, then adjust its color, shape, and offset if needed."
+        )
+    ]
+
+    var currentStep: SetupAssistantStep {
+        steps[min(stepIndex, steps.count - 1)]
+    }
+
+    var isLastStep: Bool {
+        stepIndex >= steps.count - 1
+    }
+
+    init(defaults: UserDefaults = .standard) {
+        isPresented = !defaults.bool(forKey: Self.completedKey)
+    }
+
+    func advance() -> ToolSection? {
+        guard !isLastStep else {
+            complete()
+            return nil
+        }
+
+        stepIndex += 1
+        return currentStep.section
+    }
+
+    func skipAll() {
+        complete()
+    }
+
+    private func complete() {
+        UserDefaults.standard.set(true, forKey: Self.completedKey)
+        UserDefaults.standard.synchronize()
+        isPresented = false
+    }
+}
+
+struct SetupAssistantPopup: View {
+    let step: SetupAssistantStep
+    let nextAction: () -> Void
+    let skipAction: () -> Void
+    let skipAllAction: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
+                Text("Get started")
+                    .font(.system(size: 17, weight: .black))
+                Spacer()
+                if let section = step.section {
+                    Label(section.rawValue, systemImage: section.icon)
+                        .font(.system(size: 11, weight: .bold))
+                        .labelStyle(.titleAndIcon)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Text(step.bodyText)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.white.opacity(0.82))
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 8) {
+                Button("Next", action: nextAction)
+                    .buttonStyle(SetupAssistantPrimaryButtonStyle())
+
+                Button("Skip", action: skipAction)
+                    .buttonStyle(SetupAssistantSecondaryButtonStyle())
+
+                Button("Skip all", action: skipAllAction)
+                    .buttonStyle(SetupAssistantSecondaryButtonStyle())
+            }
+        }
+        .padding(16)
+        .frame(width: 360, alignment: .leading)
+        .background(Color.black)
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.42), lineWidth: 1))
+        .shadow(color: .black.opacity(0.42), radius: 18, y: 10)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+struct SetupAssistantPrimaryButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 12, weight: .bold))
+            .padding(.vertical, 7)
+            .padding(.horizontal, 13)
+            .background(Color.white)
+            .foregroundStyle(Color.black)
+            .clipShape(RoundedRectangle(cornerRadius: 7))
+            .opacity(configuration.isPressed ? 0.72 : 1)
+    }
+}
+
+struct SetupAssistantSecondaryButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 12, weight: .bold))
+            .padding(.vertical, 7)
+            .padding(.horizontal, 12)
+            .foregroundStyle(Color.white)
+            .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.white.opacity(0.38), lineWidth: 1))
+            .opacity(configuration.isPressed ? 0.72 : 1)
     }
 }
 
