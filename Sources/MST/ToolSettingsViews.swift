@@ -186,7 +186,7 @@ struct BetterNBBSettingsView: View {
             SectionBox(title: "Options") {
                 Toggle("Hide 0% predictions", isOn: binding(\.hideZeroPct))
                 Toggle("Show NBB messages", isOn: binding(\.showInfoMessages))
-                Toggle("Show movement hint", isOn: binding(\.showMoveHint))
+                Toggle("Show movement hint (can invalidate RSG runs and is illegal for Ranked.)", isOn: binding(\.showMoveHint))
             }
 
             SectionBox(title: "Window Style") {

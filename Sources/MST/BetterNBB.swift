@@ -1781,7 +1781,7 @@ final class SettingsWindow: NSWindowController, @preconcurrency DragPickerDelega
     private let chkEyeMarker = check("Boat dot")
     private let chkHideZero = check("Hide 0% predictions")
     private let chkInfoMsgs = check("Show NBB messages")
-    private let chkMoveHint = check("Show movement hint (Can invalidate RSG runs)")
+    private let chkMoveHint = check("Show movement hint (can invalidate RSG runs and is illegal for Ranked.)")
     private let connLbl     = NSTextField(labelWithString: "⚠️  Not connected to NBB")
 
     init() {
