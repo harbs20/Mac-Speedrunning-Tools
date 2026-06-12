@@ -10,6 +10,8 @@ private struct WindowBackdropPersistedSettings: Codable {
     var opacity: Double
     var blurRadius: Double
     var coverMenuBar: Bool
+    var affectMode: WindowAffectMode?
+    var specifiedWindowTargets: [WindowTargetIdentity]?
 }
 
 @MainActor
@@ -25,6 +27,18 @@ final class WindowBackdropState: ObservableObject {
     @Published var opacity = 1.0 { didSet { persistSettings() } }
     @Published var blurRadius = 0.0 { didSet { persistSettings() } }
     @Published var coverMenuBar = false { didSet { persistSettings() } }
+    @Published var affectMode = WindowAffectMode.allWindows {
+        didSet {
+            persistSettings()
+            syncToFrontmostWindow()
+        }
+    }
+    @Published var specifiedWindowTargets: [WindowTargetIdentity] = [] {
+        didSet {
+            persistSettings()
+            syncToFrontmostWindow()
+        }
+    }
     @Published var status = "Press Start, then click any window. The rest of that display becomes the backdrop."
     @Published private(set) var isBackdropVisible = false
     @Published var isBackdropEnabled = false {
@@ -53,6 +67,27 @@ final class WindowBackdropState: ObservableObject {
 
     func refreshWindows() {
         tracker.refresh()
+    }
+
+    func isSpecifiedTarget(_ window: TrackedWindow) -> Bool {
+        isSpecifiedTarget(window.targetIdentity)
+    }
+
+    func isSpecifiedTarget(_ identity: WindowTargetIdentity) -> Bool {
+        specifiedWindowTargets.contains(identity)
+    }
+
+    func setSpecifiedTarget(_ window: TrackedWindow, enabled: Bool) {
+        setSpecifiedTarget(window.targetIdentity, enabled: enabled)
+    }
+
+    func setSpecifiedTarget(_ identity: WindowTargetIdentity, enabled: Bool) {
+        if enabled {
+            guard !specifiedWindowTargets.contains(identity) else { return }
+            specifiedWindowTargets.append(identity)
+        } else {
+            specifiedWindowTargets.removeAll { $0 == identity }
+        }
     }
 
     func chooseImage() {
@@ -125,10 +160,16 @@ final class WindowBackdropState: ObservableObject {
             return
         }
 
-        guard let window = tracker.frontmostWindow() else {
-            status = activeWindow == nil
-                ? "No target window found. Click a normal app window."
-                : "Waiting for the active Space to settle..."
+        guard let window = targetWindowForCurrentMode() else {
+            activeWindow = nil
+            backdropController.close()
+            if affectMode == .specifiedWindowsOnly {
+                status = specifiedWindowTargets.isEmpty
+                    ? "Choose at least one detected window to affect."
+                    : "Waiting for a specified window to be focused."
+            } else {
+                status = "No target window found. Click a normal window."
+            }
             return
         }
 
@@ -138,6 +179,15 @@ final class WindowBackdropState: ObservableObject {
 
         if previousWindowID != window.id {
             status = "Backdrop following \(window.displayName)."
+        }
+    }
+
+    private func targetWindowForCurrentMode() -> TrackedWindow? {
+        switch affectMode {
+        case .allWindows:
+            return tracker.frontmostWindow()
+        case .specifiedWindowsOnly:
+            return tracker.frontmostWindow(matching: specifiedWindowTargets)
         }
     }
 
@@ -177,6 +227,8 @@ final class WindowBackdropState: ObservableObject {
         opacity = settings.opacity
         blurRadius = settings.blurRadius
         coverMenuBar = settings.coverMenuBar
+        affectMode = settings.affectMode ?? .allWindows
+        specifiedWindowTargets = settings.specifiedWindowTargets ?? []
     }
 
     private func persistSettings() {
@@ -189,7 +241,9 @@ final class WindowBackdropState: ObservableObject {
             imageFitMode: imageFitMode,
             opacity: opacity,
             blurRadius: blurRadius,
-            coverMenuBar: coverMenuBar
+            coverMenuBar: coverMenuBar,
+            affectMode: affectMode,
+            specifiedWindowTargets: specifiedWindowTargets
         )
 
         guard let data = try? JSONEncoder().encode(settings) else { return }

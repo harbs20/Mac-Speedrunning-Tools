@@ -21,4 +21,41 @@ struct TrackedWindow: Identifiable, Hashable, Sendable {
     var sizeDescription: String {
         "\(Int(frame.width)) x \(Int(frame.height))"
     }
+
+    var targetIdentity: WindowTargetIdentity {
+        WindowTargetIdentity(ownerName: ownerName, title: title)
+    }
+}
+
+enum WindowAffectMode: String, CaseIterable, Codable, Identifiable {
+    case allWindows
+    case specifiedWindowsOnly
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .allWindows:
+            return "Affect all windows"
+        case .specifiedWindowsOnly:
+            return "Affect specified windows only"
+        }
+    }
+}
+
+struct WindowTargetIdentity: Codable, Hashable, Identifiable, Sendable {
+    var ownerName: String
+    var title: String
+
+    var id: String {
+        "\(ownerName)\u{1f}\(title)"
+    }
+
+    var displayName: String {
+        if title.isEmpty {
+            return ownerName
+        }
+        return "\(ownerName) - \(title)"
+    }
+
 }

@@ -263,10 +263,68 @@ struct WindowBackdropSettingsView: View {
 
             SectionBox(title: "Coverage") {
                 Toggle("Cover Menu Bar", isOn: $state.coverMenuBar)
+                Picker("Window Scope", selection: $state.affectMode) {
+                    ForEach(WindowAffectMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                if state.affectMode == .specifiedWindowsOnly {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Text("Detected Windows")
+                                .font(.headline)
+                            Spacer()
+                            Button {
+                                state.refreshWindows()
+                            } label: {
+                                Label("Refresh", systemImage: "arrow.clockwise")
+                            }
+                            .buttonStyle(.bordered)
+                        }
+
+                        if selectableTargets.isEmpty {
+                            Text("No eligible windows detected.")
+                                .foregroundStyle(.secondary)
+                        } else {
+                            VStack(alignment: .leading, spacing: 8) {
+                                ForEach(selectableTargets) { target in
+                                    Toggle(isOn: Binding(
+                                        get: { state.isSpecifiedTarget(target) },
+                                        set: { state.setSpecifiedTarget(target, enabled: $0) }
+                                    )) {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(target.displayName)
+                                            Text(targetDetail(for: target))
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 Text(state.status)
                     .foregroundStyle(.secondary)
             }
         }
+    }
+
+    private var selectableTargets: [WindowTargetIdentity] {
+        var seen = Set<WindowTargetIdentity>()
+        return (state.windows.map(\.targetIdentity) + state.specifiedWindowTargets).filter { target in
+            seen.insert(target).inserted
+        }
+    }
+
+    private func targetDetail(for target: WindowTargetIdentity) -> String {
+        if let window = state.windows.first(where: { $0.targetIdentity == target }) {
+            return window.sizeDescription
+        }
+        return "Not currently detected"
     }
 }
 

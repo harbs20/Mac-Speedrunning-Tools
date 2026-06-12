@@ -86,6 +86,20 @@ final class WindowTracker: ObservableObject {
         return windows.first
     }
 
+    func frontmostWindow(matching targets: [WindowTargetIdentity]) -> TrackedWindow? {
+        refresh()
+
+        guard !targets.isEmpty else { return nil }
+
+        if let frontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier {
+            return windows.first { window in
+                window.ownerPID == frontmostPID && targets.contains(window.targetIdentity)
+            }
+        }
+
+        return nil
+    }
+
     private static func isFinderDesktop(ownerName: String, title: String, frame: CGRect) -> Bool {
         guard ownerName == "Finder", title.isEmpty else { return false }
 
