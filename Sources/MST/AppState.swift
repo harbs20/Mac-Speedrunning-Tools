@@ -122,7 +122,7 @@ final class WindowBackdropState: ObservableObject {
     private func startBackdrop() {
         isBackdropVisible = true
         syncTimer?.invalidate()
-        syncTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+        syncTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.syncToFrontmostWindow()
             }

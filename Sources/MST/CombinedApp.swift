@@ -160,7 +160,7 @@ final class ToolHub: ObservableObject {
         case .piechart:
             piechart.toggleProjectorVisibility()
         case .piechartBeta:
-            piechartBeta.toggleProjectorVisibility()
+            break
         case .crosshair:
             crosshair.toggleVisibility()
         }

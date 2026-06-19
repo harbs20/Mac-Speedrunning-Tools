@@ -12,28 +12,151 @@ struct PiechartBetaWindowCandidate: Identifiable, Hashable {
 }
 
 private struct PiechartBetaPersistedSettings: Codable {
+    private static let templateHeightBase = 0.50
+    private static let cropSizeBase = 0.45
+    private static let stretchMultiplierBase = 0.93
+
     var projectorAlwaysOnTop: Bool
     var projectorShowTitlebar: Bool
     var projectorFPS: Double
+    var projectorFrame: PersistedRect?
+    var selectedWindowDisplayName: String?
+    var selectedWindowSizeDescription: String?
     var thinWidth: Int
     var thinHeight: Int
+    var entityCounterYOffset: Double
     var templateHeightScale: Double
     var cropSizeScale: Double
     var stretchMultiplierScale: Double
     var templateCenterX: Double
     var templateCenterY: Double
+
+    enum CodingKeys: String, CodingKey {
+        case projectorAlwaysOnTop
+        case projectorShowTitlebar
+        case projectorFPS
+        case projectorFrame
+        case selectedWindowDisplayName
+        case selectedWindowSizeDescription
+        case thinWidth
+        case thinHeight
+        case entityCounterYOffset
+        case templateHeightScale
+        case cropSizeScale
+        case stretchMultiplierScale
+        case templateHeightRatio
+        case cropSize
+        case stretchMultiplier
+        case templateCenterX
+        case templateCenterY
+    }
+
+    init(
+        projectorAlwaysOnTop: Bool,
+        projectorShowTitlebar: Bool,
+        projectorFPS: Double,
+        projectorFrame: PersistedRect?,
+        selectedWindowDisplayName: String?,
+        selectedWindowSizeDescription: String?,
+        thinWidth: Int,
+        thinHeight: Int,
+        entityCounterYOffset: Double,
+        templateHeightScale: Double,
+        cropSizeScale: Double,
+        stretchMultiplierScale: Double,
+        templateCenterX: Double,
+        templateCenterY: Double
+    ) {
+        self.projectorAlwaysOnTop = projectorAlwaysOnTop
+        self.projectorShowTitlebar = projectorShowTitlebar
+        self.projectorFPS = projectorFPS
+        self.projectorFrame = projectorFrame
+        self.selectedWindowDisplayName = selectedWindowDisplayName
+        self.selectedWindowSizeDescription = selectedWindowSizeDescription
+        self.thinWidth = thinWidth
+        self.thinHeight = thinHeight
+        self.entityCounterYOffset = entityCounterYOffset
+        self.templateHeightScale = templateHeightScale
+        self.cropSizeScale = cropSizeScale
+        self.stretchMultiplierScale = stretchMultiplierScale
+        self.templateCenterX = templateCenterX
+        self.templateCenterY = templateCenterY
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        projectorAlwaysOnTop = try container.decodeIfPresent(Bool.self, forKey: .projectorAlwaysOnTop) ?? true
+        projectorShowTitlebar = try container.decodeIfPresent(Bool.self, forKey: .projectorShowTitlebar) ?? false
+        projectorFPS = try container.decodeIfPresent(Double.self, forKey: .projectorFPS) ?? 60
+        projectorFrame = try container.decodeIfPresent(PersistedRect.self, forKey: .projectorFrame)
+        selectedWindowDisplayName = try container.decodeIfPresent(String.self, forKey: .selectedWindowDisplayName)
+        selectedWindowSizeDescription = try container.decodeIfPresent(String.self, forKey: .selectedWindowSizeDescription)
+        thinWidth = try container.decodeIfPresent(Int.self, forKey: .thinWidth) ?? 384
+        thinHeight = try container.decodeIfPresent(Int.self, forKey: .thinHeight) ?? 1080
+        entityCounterYOffset = try container.decodeIfPresent(Double.self, forKey: .entityCounterYOffset) ?? 37
+
+        if let scale = try container.decodeIfPresent(Double.self, forKey: .templateHeightScale) {
+            templateHeightScale = scale
+        } else if let ratio = try container.decodeIfPresent(Double.self, forKey: .templateHeightRatio) {
+            templateHeightScale = ratio / Self.templateHeightBase
+        } else {
+            templateHeightScale = 1
+        }
+
+        if let scale = try container.decodeIfPresent(Double.self, forKey: .cropSizeScale) {
+            cropSizeScale = scale
+        } else if let crop = try container.decodeIfPresent(Double.self, forKey: .cropSize) {
+            cropSizeScale = crop / Self.cropSizeBase
+        } else {
+            cropSizeScale = 1
+        }
+
+        if let scale = try container.decodeIfPresent(Double.self, forKey: .stretchMultiplierScale) {
+            stretchMultiplierScale = scale
+        } else if let stretch = try container.decodeIfPresent(Double.self, forKey: .stretchMultiplier) {
+            stretchMultiplierScale = stretch / Self.stretchMultiplierBase
+        } else {
+            stretchMultiplierScale = 1
+        }
+
+        templateCenterX = try container.decodeIfPresent(Double.self, forKey: .templateCenterX) ?? 0.5
+        templateCenterY = try container.decodeIfPresent(Double.self, forKey: .templateCenterY) ?? 0.5
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(projectorAlwaysOnTop, forKey: .projectorAlwaysOnTop)
+        try container.encode(projectorShowTitlebar, forKey: .projectorShowTitlebar)
+        try container.encode(projectorFPS, forKey: .projectorFPS)
+        try container.encodeIfPresent(projectorFrame, forKey: .projectorFrame)
+        try container.encodeIfPresent(selectedWindowDisplayName, forKey: .selectedWindowDisplayName)
+        try container.encodeIfPresent(selectedWindowSizeDescription, forKey: .selectedWindowSizeDescription)
+        try container.encode(thinWidth, forKey: .thinWidth)
+        try container.encode(thinHeight, forKey: .thinHeight)
+        try container.encode(entityCounterYOffset, forKey: .entityCounterYOffset)
+        try container.encode(templateHeightScale, forKey: .templateHeightScale)
+        try container.encode(cropSizeScale, forKey: .cropSizeScale)
+        try container.encode(stretchMultiplierScale, forKey: .stretchMultiplierScale)
+        try container.encode(templateCenterX, forKey: .templateCenterX)
+        try container.encode(templateCenterY, forKey: .templateCenterY)
+    }
 }
 
 private struct PiechartBetaDetection {
     let rawCrop: CGImage
     let correctedImage: CGImage
+    let entityCounterImage: CGImage?
     let cropRect: CGRect
-    let visibilityScore: Double
 }
 
 @MainActor
 final class PiechartBetaState: ObservableObject {
-    private static let betaSettingsKey = "mts.piechartbeta.settings.v2"
+    private static let betaSettingsKey = "mts.piechartbeta.settings.v3"
+    private static let legacySettingsKeys = [
+        "mts.piechartbeta.settings.v2",
+        "mts.piechartbeta.settings.v1"
+    ]
     private static let thinTolerance = 5
     private static let templateHeightBase = 0.50
     private static let cropSizeBase = 0.45
@@ -47,11 +170,13 @@ final class PiechartBetaState: ObservableObject {
     @Published var selectedWindowID: CGWindowID?
     @Published var rawPiePreview: CGImage?
     @Published var correctedPreview: CGImage?
+    @Published var entityCounterPreview: CGImage?
     @Published var statusText = "Set your thin resolution, refresh Minecraft windows, then start the thin projector."
     @Published var detectionText = "Waiting for a thin-mode Minecraft window."
     @Published var projectorFPS = 60.0
     @Published var thinWidth = 384
     @Published var thinHeight = 1080
+    @Published var entityCounterYOffset = 37.0
     @Published var templateHeightScale = 1.00
     @Published var cropSizeScale = 1.00
     @Published var stretchMultiplierScale = 1.00
@@ -66,8 +191,10 @@ final class PiechartBetaState: ObservableObject {
     private var captureScale = 1.0
     private var lastDetectionTime = CFAbsoluteTimeGetCurrent()
     private var pendingCaptureRestart: Task<Void, Never>?
-    private var projectorEnabledByShortcut = true
     private var lastThinModeMatch = false
+    private var projectorFrame: CGRect?
+    private var selectedWindowDisplayName: String?
+    private var selectedWindowSizeDescription: String?
 
     var primaryToggleTitle: String {
         isLive ? "Stop BetterPiechart^2" : "Start BetterPiechart^2"
@@ -87,19 +214,14 @@ final class PiechartBetaState: ObservableObject {
 
     init() {
         loadPersistedSettings()
+        projector.onFrameChange = { [weak self] frame in
+            self?.projectorFrame = frame
+            self?.persistSettings()
+        }
     }
 
     func toggle() {
         isLive ? stop() : start()
-    }
-
-    func toggleProjectorVisibility() {
-        guard isLive else { return }
-        projectorEnabledByShortcut.toggle()
-        applyProjectorVisibility()
-        statusText = projectorEnabledByShortcut
-            ? "Projector will appear automatically when the selected window is in thin mode."
-            : "Projector hidden until you toggle it back on."
     }
 
     func setProjectorAlwaysOnTop(_ value: Bool) {
@@ -132,6 +254,22 @@ final class PiechartBetaState: ObservableObject {
         restartCaptureSoon()
     }
 
+    func setSelectedWindowID(_ value: CGWindowID?) {
+        selectedWindowID = value
+        if let value,
+           let selected = availableWindows.first(where: { $0.id == value }) {
+            selectedWindowDisplayName = selected.displayName
+            selectedWindowSizeDescription = selected.sizeDescription
+        }
+        persistSettings()
+        restartCaptureSoon()
+    }
+
+    func setEntityCounterYOffset(_ value: Double) {
+        entityCounterYOffset = value.rounded()
+        persistSettings()
+    }
+
     func updateTemplateHeightScale(_ value: Double) {
         templateHeightScale = value
         persistSettings()
@@ -154,6 +292,11 @@ final class PiechartBetaState: ObservableObject {
         templateCenterNormalized = Self.clampedNormalizedPoint(normalizedPoint)
         persistSettings()
         refreshFromCurrentPreview()
+        statusText = String(
+            format: "Saved pie location at %.2f, %.2f.",
+            templateCenterNormalized.x,
+            templateCenterNormalized.y
+        )
     }
 
     func importThinSetup() {
@@ -165,6 +308,10 @@ final class PiechartBetaState: ObservableObject {
         }
 
         selectedWindowID = windowID
+        if let selected = availableWindows.first(where: { $0.id == windowID }) {
+            selectedWindowDisplayName = selected.displayName
+            selectedWindowSizeDescription = selected.sizeDescription
+        }
         thinWidth = max(64, Int(bounds.width.rounded()))
         thinHeight = max(64, Int(bounds.height.rounded()))
         persistSettings()
@@ -209,8 +356,23 @@ final class PiechartBetaState: ObservableObject {
                 )
             }
 
+            var shouldSaveSelectedWindow = false
             if selectedWindowID == nil || !availableWindows.contains(where: { $0.id == selectedWindowID }) {
-                selectedWindowID = availableWindows.first?.id
+                if let restoredID = restoredWindowID(from: availableWindows) {
+                    selectedWindowID = restoredID
+                    shouldSaveSelectedWindow = true
+                } else {
+                    selectedWindowID = availableWindows.first?.id
+                    shouldSaveSelectedWindow = selectedWindowDisplayName == nil
+                }
+            }
+
+            if shouldSaveSelectedWindow,
+               let selectedWindowID,
+               let selected = availableWindows.first(where: { $0.id == selectedWindowID }) {
+                selectedWindowDisplayName = selected.displayName
+                selectedWindowSizeDescription = selected.sizeDescription
+                persistSettings()
             }
 
             statusText = availableWindows.isEmpty
@@ -232,12 +394,12 @@ final class PiechartBetaState: ObservableObject {
         }
 
         isLive = true
-        projectorEnabledByShortcut = true
         lastThinModeMatch = false
         projector.show(
             model: projectorModel,
             alwaysOnTop: projectorAlwaysOnTop,
-            showTitlebar: projectorShowTitlebar
+            showTitlebar: projectorShowTitlebar,
+            initialFrame: projectorFrame
         )
         projector.setVisible(false)
         statusText = "Starting thin-mode ScreenCaptureKit window capture..."
@@ -252,8 +414,10 @@ final class PiechartBetaState: ObservableObject {
         lastThinModeMatch = false
         projector.setVisible(false)
         projectorModel.correctedImage = nil
+        projectorModel.entityCounterImage = nil
         rawPiePreview = nil
         correctedPreview = nil
+        entityCounterPreview = nil
         pendingCaptureRestart?.cancel()
         pendingCaptureRestart = nil
         statusText = "Stopped."
@@ -306,6 +470,7 @@ final class PiechartBetaState: ObservableObject {
                 self?.statusText = "Capture stopped: \(error.localizedDescription)"
                 self?.isLive = false
                 self?.isProjectorVisible = false
+                self?.projector.setVisible(false)
             }
         }
 
@@ -354,7 +519,9 @@ final class PiechartBetaState: ObservableObject {
         guard thinModeMatch else {
             rawPiePreview = nil
             correctedPreview = nil
+            entityCounterPreview = nil
             projectorModel.correctedImage = nil
+            projectorModel.entityCounterImage = nil
             isProjectorVisible = false
             projector.setVisible(false)
             detectionText = "Window size \(Int(bounds.width.rounded())) x \(Int(bounds.height.rounded())) is not within ±\(Self.thinTolerance)px of thin mode."
@@ -368,12 +535,15 @@ final class PiechartBetaState: ObservableObject {
             templateHeightRatio: effectiveTemplateHeightRatio,
             cropSize: effectiveCropSize,
             stretchMultiplier: effectiveStretchMultiplier,
-            templateCenterNormalized: templateCenterNormalized
+            templateCenterNormalized: templateCenterNormalized,
+            entityCounterYOffset: entityCounterYOffset
         ) else {
             if CFAbsoluteTimeGetCurrent() - lastDetectionTime > 0.5 {
                 rawPiePreview = nil
                 correctedPreview = nil
+                entityCounterPreview = nil
                 projectorModel.correctedImage = nil
+                projectorModel.entityCounterImage = nil
                 isProjectorVisible = false
                 projector.setVisible(false)
                 detectionText = "No pie detected in the thin-mode crop yet."
@@ -385,20 +555,21 @@ final class PiechartBetaState: ObservableObject {
         lastDetectionTime = CFAbsoluteTimeGetCurrent()
         rawPiePreview = detection.rawCrop
         correctedPreview = detection.correctedImage
+        entityCounterPreview = detection.entityCounterImage
         projectorModel.correctedImage = detection.correctedImage
+        projectorModel.entityCounterImage = detection.entityCounterImage
         applyProjectorVisibility()
         detectionText = String(
-            format: "Thin crop %.0f, %.0f  %.0f x %.0f | score %.2f | template %.2fx | crop %.2fx | fit %.2fx",
+            format: "Thin crop %.0f, %.0f  %.0f x %.0f | template %.2fx | crop %.2fx | fit %.2fx",
             detection.cropRect.minX,
             detection.cropRect.minY,
             detection.cropRect.width,
             detection.cropRect.height,
-            detection.visibilityScore,
             templateHeightScale,
             cropSizeScale,
             stretchMultiplierScale
         )
-        statusText = "Thin mode detected. Pie projector ready."
+        statusText = "Thin mode detected. Projector is open."
     }
 
     private func refreshFromCurrentPreview() {
@@ -415,12 +586,13 @@ final class PiechartBetaState: ObservableObject {
 
         correctedPreview = corrected
         projectorModel.correctedImage = corrected
+        projectorModel.entityCounterImage = entityCounterPreview
         applyProjectorVisibility()
         statusText = "Updated BetterPiechart^2 fit."
     }
 
     private func applyProjectorVisibility() {
-        let shouldShow = isLive && projectorEnabledByShortcut && lastThinModeMatch && projectorModel.correctedImage != nil
+        let shouldShow = isLive && lastThinModeMatch && projectorModel.correctedImage != nil
         isProjectorVisible = shouldShow
         projector.setVisible(shouldShow)
     }
@@ -430,23 +602,58 @@ final class PiechartBetaState: ObservableObject {
         return shareableWindows.first { $0.windowID == selectedWindowID }
     }
 
+    private func restoredWindowID(from windows: [PiechartBetaWindowCandidate]) -> CGWindowID? {
+        if let selectedWindowDisplayName,
+           let selectedWindowSizeDescription,
+           let exact = windows.first(where: {
+               $0.displayName == selectedWindowDisplayName &&
+               $0.sizeDescription == selectedWindowSizeDescription
+           }) {
+            return exact.id
+        }
+
+        if let selectedWindowDisplayName,
+           let nameMatch = windows.first(where: { $0.displayName == selectedWindowDisplayName }) {
+            return nameMatch.id
+        }
+
+        return nil
+    }
+
     private func loadPersistedSettings() {
-        guard let data = UserDefaults.standard.data(forKey: Self.betaSettingsKey),
-              let settings = try? JSONDecoder().decode(PiechartBetaPersistedSettings.self, from: data) else {
+        guard let settings = Self.loadSettingsFromDefaults() else {
             return
         }
 
         projectorAlwaysOnTop = settings.projectorAlwaysOnTop
         projectorShowTitlebar = settings.projectorShowTitlebar
         projectorFPS = settings.projectorFPS
+        projectorFrame = settings.projectorFrame?.cgRect
+        selectedWindowDisplayName = settings.selectedWindowDisplayName
+        selectedWindowSizeDescription = settings.selectedWindowSizeDescription
         thinWidth = settings.thinWidth
         thinHeight = settings.thinHeight
+        entityCounterYOffset = settings.entityCounterYOffset
         templateHeightScale = settings.templateHeightScale
         cropSizeScale = settings.cropSizeScale
         stretchMultiplierScale = settings.stretchMultiplierScale
         templateCenterNormalized = Self.clampedNormalizedPoint(
             CGPoint(x: settings.templateCenterX, y: settings.templateCenterY)
         )
+        persistSettings()
+    }
+
+    private static func loadSettingsFromDefaults() -> PiechartBetaPersistedSettings? {
+        let defaults = UserDefaults.standard
+        for key in [betaSettingsKey] + legacySettingsKeys {
+            guard let data = defaults.data(forKey: key),
+                  let settings = try? JSONDecoder().decode(PiechartBetaPersistedSettings.self, from: data) else {
+                continue
+            }
+            return settings
+        }
+
+        return nil
     }
 
     private func persistSettings() {
@@ -454,8 +661,12 @@ final class PiechartBetaState: ObservableObject {
             projectorAlwaysOnTop: projectorAlwaysOnTop,
             projectorShowTitlebar: projectorShowTitlebar,
             projectorFPS: projectorFPS,
+            projectorFrame: projector.frame.map { PersistedRect($0) } ?? projectorFrame.map { PersistedRect($0) },
+            selectedWindowDisplayName: selectedWindowDisplayName,
+            selectedWindowSizeDescription: selectedWindowSizeDescription,
             thinWidth: thinWidth,
             thinHeight: thinHeight,
+            entityCounterYOffset: entityCounterYOffset,
             templateHeightScale: templateHeightScale,
             cropSizeScale: cropSizeScale,
             stretchMultiplierScale: stretchMultiplierScale,
@@ -464,7 +675,9 @@ final class PiechartBetaState: ObservableObject {
         )
 
         guard let data = try? JSONEncoder().encode(settings) else { return }
-        UserDefaults.standard.set(data, forKey: Self.betaSettingsKey)
+        let defaults = UserDefaults.standard
+        defaults.set(data, forKey: Self.betaSettingsKey)
+        defaults.synchronize()
     }
 
     private static func displayName(for window: SCWindow) -> String {
@@ -515,7 +728,8 @@ final class PiechartBetaState: ObservableObject {
         templateHeightRatio: Double,
         cropSize: Double,
         stretchMultiplier: Double,
-        templateCenterNormalized: CGPoint
+        templateCenterNormalized: CGPoint,
+        entityCounterYOffset: Double
     ) -> PiechartBetaDetection? {
         let factor = max(1, min(2, Int(captureScale.rounded(.down))))
         let cropWidth = min(image.width, 340 * factor)
@@ -525,9 +739,12 @@ final class PiechartBetaState: ObservableObject {
         let cropRect = CGRect(x: cropX, y: cropY, width: cropWidth, height: cropHeight)
 
         guard let rawCrop = image.cropping(to: cropRect.integral) else { return nil }
-        let visibilityScore = pieVisibilityScore(for: rawCrop, templateHeightRatio: templateHeightRatio)
-        guard visibilityScore >= 0.58,
-              let corrected = correctedThinPieImage(
+        let entityCounterImage = entityCounterCrop(
+            in: image,
+            factor: factor,
+            yOffset: entityCounterYOffset
+        )
+        guard let corrected = correctedThinPieImage(
                 from: rawCrop,
                 templateHeightRatio: templateHeightRatio,
                 cropSize: cropSize,
@@ -540,9 +757,25 @@ final class PiechartBetaState: ObservableObject {
         return PiechartBetaDetection(
             rawCrop: rawCrop,
             correctedImage: corrected,
-            cropRect: cropRect,
-            visibilityScore: visibilityScore
+            entityCounterImage: entityCounterImage,
+            cropRect: cropRect
         )
+    }
+
+    private static func entityCounterCrop(
+        in image: CGImage,
+        factor: Int,
+        yOffset: Double
+    ) -> CGImage? {
+        let counterWidth = min(image.width, 67 * factor)
+        let counterHeight = min(image.height, 9 * factor)
+        let counterX = min(max(0, 1 * factor), max(0, image.width - counterWidth))
+        let counterY = min(
+            max(0, Int((yOffset * Double(factor)).rounded())),
+            max(0, image.height - counterHeight)
+        )
+        let cropRect = CGRect(x: counterX, y: counterY, width: counterWidth, height: counterHeight).integral
+        return image.cropping(to: cropRect)
     }
 
     private static func correctedThinPieImage(
@@ -666,159 +899,6 @@ final class PiechartBetaState: ObservableObject {
         return context.makeImage()
     }
 
-    private static func pieVisibilityScore(for image: CGImage, templateHeightRatio: Double) -> Double {
-        guard let provider = image.dataProvider,
-              let data = provider.data,
-              let bytes = CFDataGetBytePtr(data) else {
-            return 0
-        }
-
-        let width = image.width
-        let height = image.height
-        let bytesPerRow = image.bytesPerRow
-        let centerX = Double(width) * 0.5
-        let centerY = Double(height) * 0.5
-        let radiusX = Double(width) * 0.47
-        let radiusY = min(Double(height) * 0.47, radiusX * max(0.08, templateHeightRatio))
-        let step = max(1, min(width, height) / 80)
-
-        var insideCount = 0.0
-        var filledCount = 0.0
-        var saturatedCount = 0.0
-        var hueBins = Array(repeating: 0.0, count: 12)
-
-        var y = 0
-        while y < height {
-            var x = 0
-            while x < width {
-                let nx = (Double(x) - centerX) / radiusX
-                let ny = (Double(y) - centerY) / radiusY
-                if (nx * nx) + (ny * ny) <= 1.0 {
-                    insideCount += 1
-                    let offset = y * bytesPerRow + x * 4
-                    let blue = Double(bytes[offset]) / 255.0
-                    let green = Double(bytes[offset + 1]) / 255.0
-                    let red = Double(bytes[offset + 2]) / 255.0
-                    let maxChannel = max(red, green, blue)
-                    let minChannel = min(red, green, blue)
-                    let saturation = maxChannel == 0 ? 0 : (maxChannel - minChannel) / maxChannel
-                    let brightness = maxChannel
-                    if brightness > 0.14 {
-                        filledCount += 1
-                    }
-                    if saturation > 0.16 && brightness > 0.18 && brightness < 0.98 {
-                        saturatedCount += 1
-                        let hue = hue(red: red, green: green, blue: blue)
-                        let bin = min(hueBins.count - 1, max(0, Int((hue * Double(hueBins.count)).rounded(.down))))
-                        hueBins[bin] += 1
-                    }
-                }
-                x += step
-            }
-            y += step
-        }
-
-        let fillCoverage = insideCount > 0 ? filledCount / insideCount : 0
-        let significantHueBins = hueBins.filter { saturatedCount > 0 ? ($0 / saturatedCount) > 0.08 : false }.count
-
-        let midlineRows = [-0.18, -0.06, 0.06, 0.18]
-        var rowCoverageSum = 0.0
-        var rowCoverageCount = 0.0
-
-        for relativeY in midlineRows {
-            let sampleY = Int((centerY + (radiusY * relativeY)).rounded())
-            guard (0..<height).contains(sampleY) else { continue }
-
-            var rowInside = 0.0
-            var rowFilled = 0.0
-            var sampleX = 0
-            while sampleX < width {
-                let nx = (Double(sampleX) - centerX) / radiusX
-                let ny = (Double(sampleY) - centerY) / radiusY
-                if (nx * nx) + (ny * ny) <= 1.0 {
-                    rowInside += 1
-                    let brightness = pixelBrightness(bytes: bytes, bytesPerRow: bytesPerRow, x: sampleX, y: sampleY)
-                    if brightness > 0.14 {
-                        rowFilled += 1
-                    }
-                }
-                sampleX += step
-            }
-
-            if rowInside > 0 {
-                rowCoverageSum += rowFilled / rowInside
-                rowCoverageCount += 1
-            }
-        }
-
-        let midlineCoverage = rowCoverageCount > 0 ? rowCoverageSum / rowCoverageCount : 0
-        guard fillCoverage > 0.42, midlineCoverage > 0.48, significantHueBins >= 2 else {
-            return 0
-        }
-
-        let borderSamples = 48
-        var borderContrast = 0.0
-        var borderCount = 0.0
-
-        for sampleIndex in 0..<borderSamples {
-            let angle = (Double(sampleIndex) / Double(borderSamples)) * Double.pi * 2.0
-            let cosAngle = cos(angle)
-            let sinAngle = sin(angle)
-
-            let innerX = Int((centerX + (radiusX * 0.94 * cosAngle)).rounded())
-            let innerY = Int((centerY + (radiusY * 0.94 * sinAngle)).rounded())
-            let outerX = Int((centerX + (radiusX * 1.05 * cosAngle)).rounded())
-            let outerY = Int((centerY + (radiusY * 1.05 * sinAngle)).rounded())
-
-            guard (0..<width).contains(innerX),
-                  (0..<height).contains(innerY),
-                  (0..<width).contains(outerX),
-                  (0..<height).contains(outerY) else {
-                continue
-            }
-
-            let innerBrightness = pixelBrightness(bytes: bytes, bytesPerRow: bytesPerRow, x: innerX, y: innerY)
-            let outerBrightness = pixelBrightness(bytes: bytes, bytesPerRow: bytesPerRow, x: outerX, y: outerY)
-            borderContrast += abs(innerBrightness - outerBrightness)
-            borderCount += 1
-        }
-
-        let normalizedBorderContrast = borderCount > 0 ? borderContrast / borderCount : 0
-        return (fillCoverage * 0.45) + (midlineCoverage * 0.35) + (normalizedBorderContrast * 1.25)
-    }
-
-    private static func pixelBrightness(
-        bytes: UnsafePointer<UInt8>,
-        bytesPerRow: Int,
-        x: Int,
-        y: Int
-    ) -> Double {
-        let offset = y * bytesPerRow + x * 4
-        let blue = Double(bytes[offset]) / 255.0
-        let green = Double(bytes[offset + 1]) / 255.0
-        let red = Double(bytes[offset + 2]) / 255.0
-        return max(red, green, blue)
-    }
-
-    private static func hue(red: Double, green: Double, blue: Double) -> Double {
-        let maxChannel = max(red, green, blue)
-        let minChannel = min(red, green, blue)
-        let delta = maxChannel - minChannel
-        guard delta > 0.0001 else { return 0 }
-
-        let hue: Double
-        if maxChannel == red {
-            hue = ((green - blue) / delta).truncatingRemainder(dividingBy: 6)
-        } else if maxChannel == green {
-            hue = ((blue - red) / delta) + 2
-        } else {
-            hue = ((red - green) / delta) + 4
-        }
-
-        let normalized = hue / 6.0
-        return normalized >= 0 ? normalized : normalized + 1.0
-    }
-
     private static func clampedNormalizedPoint(_ point: CGPoint) -> CGPoint {
         CGPoint(
             x: min(1.0, max(0.0, point.x)),
@@ -886,8 +966,6 @@ struct BetterPiechartBetaToolView: View {
             }
             .buttonStyle(PrimaryMonoButtonStyle(active: state.isLive))
 
-            ToolKeybindSection(section: .piechartBeta)
-
             SectionBox(title: "Thin Setup") {
                 HStack {
                     Stepper("Width: \(state.thinWidth)", value: Binding(
@@ -914,7 +992,7 @@ struct BetterPiechartBetaToolView: View {
                 HStack {
                     Picker("Window", selection: Binding(
                         get: { state.selectedWindowID ?? 0 },
-                        set: { state.selectedWindowID = $0 == 0 ? nil : $0 }
+                        set: { state.setSelectedWindowID($0 == 0 ? nil : $0) }
                     )) {
                         if state.availableWindows.isEmpty {
                             Text("No Minecraft windows").tag(CGWindowID(0))
@@ -950,6 +1028,15 @@ struct BetterPiechartBetaToolView: View {
                     ),
                     range: 10...120,
                     suffix: "fps"
+                )
+                SliderRow(
+                    title: "Entity Counter Y",
+                    value: Binding(
+                        get: { state.entityCounterYOffset },
+                        set: { state.setEntityCounterYOffset($0) }
+                    ),
+                    range: 20...90,
+                    suffix: "px"
                 )
             }
 
@@ -1025,6 +1112,13 @@ struct BetterPiechartBetaToolView: View {
                     CorrectedPiePreviewCard(image: state.correctedPreview)
                         .frame(height: 180)
                 }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Entity Counter")
+                        .font(.headline)
+                    PiechartBetaEntityCounterPreviewCard(image: state.entityCounterPreview)
+                        .frame(height: 70)
+                }
             }
 
             Text(state.detectionText)
@@ -1039,6 +1133,29 @@ struct BetterPiechartBetaToolView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .task {
             await state.refreshWindows()
+        }
+    }
+}
+
+struct PiechartBetaEntityCounterPreviewCard: View {
+    var image: CGImage?
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.black)
+
+            if let image {
+                Image(decorative: image, scale: 1.0)
+                    .resizable()
+                    .interpolation(.none)
+                    .scaledToFit()
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 14)
+            } else {
+                Text("No entity counter yet.")
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 }
