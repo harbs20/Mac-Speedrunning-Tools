@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import ServiceManagement
 import SwiftUI
 
 @main
@@ -12,9 +13,17 @@ struct MSTApp: App {
             RootView()
                 .environmentObject(hub)
                 .frame(minWidth: 980, minHeight: 680)
-                .preferredColorScheme(.dark)
+                .preferredColorScheme(hub.appSettings.preferredColorScheme)
         }
         .windowStyle(.titleBar)
+
+        Window("Settings", id: "mst-settings") {
+            MSTSettingsView(settings: hub.appSettings)
+                .environmentObject(hub)
+                .preferredColorScheme(hub.appSettings.preferredColorScheme)
+        }
+        .windowStyle(.titleBar)
+        .windowResizability(.contentSize)
         .commands {
             CommandGroup(replacing: .newItem) {}
         }
@@ -41,6 +50,97 @@ final class CombinedAppDelegate: NSObject, NSApplicationDelegate {
         }
         return true
     }
+}
+
+enum MSTAppearanceMode: String, Codable, CaseIterable, Identifiable {
+    case dark
+    case light
+    case system
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .dark: "Dark mode"
+        case .light: "Light mode"
+        case .system: "System"
+        }
+    }
+
+    var preferredColorScheme: ColorScheme? {
+        switch self {
+        case .dark, .light: .dark
+        case .system: nil
+        }
+    }
+
+    func shouldInvert(systemColorScheme: ColorScheme) -> Bool {
+        switch self {
+        case .dark: false
+        case .light: true
+        case .system: systemColorScheme == .light
+        }
+    }
+}
+
+@MainActor
+final class AppSettingsController: ObservableObject {
+    private let appearanceKey = "macSpeedrunningTools.settings.appearanceMode.v1"
+    private let openOnLaunchKey = "macSpeedrunningTools.settings.openOnLaunch.v1"
+    private var isApplyingOpenOnLaunch = false
+
+    @Published var appearanceMode: MSTAppearanceMode {
+        didSet {
+            UserDefaults.standard.set(appearanceMode.rawValue, forKey: appearanceKey)
+            UserDefaults.standard.synchronize()
+        }
+    }
+
+    @Published var openOnLaunch: Bool {
+        didSet {
+            guard !isApplyingOpenOnLaunch else { return }
+            UserDefaults.standard.set(openOnLaunch, forKey: openOnLaunchKey)
+            UserDefaults.standard.synchronize()
+            applyOpenOnLaunch()
+        }
+    }
+
+    var preferredColorScheme: ColorScheme? {
+        appearanceMode.preferredColorScheme
+    }
+
+    init() {
+        let rawMode = UserDefaults.standard.string(forKey: appearanceKey)
+        appearanceMode = rawMode.flatMap(MSTAppearanceMode.init(rawValue:)) ?? .dark
+        openOnLaunch = UserDefaults.standard.bool(forKey: openOnLaunchKey)
+    }
+
+    func restartWalkthrough() {
+        NotificationCenter.default.post(name: .restartMSTWalkthrough, object: nil)
+    }
+
+    private func applyOpenOnLaunch() {
+        guard #available(macOS 13.0, *) else { return }
+        do {
+            if openOnLaunch {
+                if SMAppService.mainApp.status != .enabled {
+                    try SMAppService.mainApp.register()
+                }
+            } else if SMAppService.mainApp.status == .enabled {
+                try SMAppService.mainApp.unregister()
+            }
+        } catch {
+            isApplyingOpenOnLaunch = true
+            openOnLaunch.toggle()
+            isApplyingOpenOnLaunch = false
+            UserDefaults.standard.set(openOnLaunch, forKey: openOnLaunchKey)
+            UserDefaults.standard.synchronize()
+        }
+    }
+}
+
+extension Notification.Name {
+    static let restartMSTWalkthrough = Notification.Name("macSpeedrunningTools.restartWalkthrough")
 }
 
 enum ToolSection: String, CaseIterable, Identifiable {
@@ -95,6 +195,7 @@ final class ToolHub: ObservableObject {
     @Published var crosshair = MacrosshairController()
     @Published var keyRebinder = KeyRebinderController()
     @Published var keybinds = ToolKeybindStore()
+    @Published var appSettings = AppSettingsController()
 
     private var cancellables: Set<AnyCancellable> = []
 
@@ -109,7 +210,8 @@ final class ToolHub: ObservableObject {
             piechart.objectWillChange.eraseToAnyPublisher(),
             crosshair.objectWillChange.eraseToAnyPublisher(),
             keyRebinder.objectWillChange.eraseToAnyPublisher(),
-            keybinds.objectWillChange.eraseToAnyPublisher()
+            keybinds.objectWillChange.eraseToAnyPublisher(),
+            appSettings.objectWillChange.eraseToAnyPublisher()
         ] {
             publisher
                 .sink { [weak self] _ in
@@ -169,6 +271,7 @@ final class ToolHub: ObservableObject {
 
 struct RootView: View {
     @EnvironmentObject private var hub: ToolHub
+    @Environment(\.colorScheme) private var systemColorScheme
     @StateObject private var setupAssistant = SetupAssistantController()
 
     var body: some View {
@@ -194,6 +297,12 @@ struct RootView: View {
                 .padding(.trailing, 22)
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .restartMSTWalkthrough)) { _ in
+            setupAssistant.resetAndShow()
+            hub.simpleMode = false
+            hub.selection = .overview
+        }
+        .modifier(MSTColorInvertModifier(enabled: hub.appSettings.appearanceMode.shouldInvert(systemColorScheme: systemColorScheme)))
     }
 
     private func advanceSetupAssistant() {
@@ -208,10 +317,25 @@ struct RootView: View {
     }
 }
 
+struct MSTColorInvertModifier: ViewModifier {
+    let enabled: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if enabled {
+            content.colorInvert()
+        } else {
+            content
+        }
+    }
+}
+
 struct SetupAssistantStep: Identifiable, Equatable {
     let id: String
     let section: ToolSection?
     let bodyText: String
+    var warningText: String?
+    var imageName: String?
 }
 
 @MainActor
@@ -230,7 +354,7 @@ final class SetupAssistantController: ObservableObject {
         SetupAssistantStep(
             id: "betternbb",
             section: .nbb,
-            bodyText: "BetterNBB: set your overlay template position with Place Overlay Template, then tune Window Style so the overlay matches your setup."
+            bodyText: "BetterNBB: Turn on the Ninjabrainbot API from Ninjabrainbot settings and set your overlay position with Place Overlay Template, and then tune Window Style to your preference."
         ),
         SetupAssistantStep(
             id: "windowbackdrop",
@@ -250,7 +374,9 @@ final class SetupAssistantController: ObservableObject {
         SetupAssistantStep(
             id: "key-rebinder",
             section: .keyRebinder,
-            bodyText: "Key Rebinder: connect Karabiner, choose a Karabiner profile, then edit the same simple modification rows Karabiner shows."
+            bodyText: "Key Rebinder: connect Karabiner, choose a Karabiner profile, then edit the same simple modification rows Karabiner shows.",
+            warningText: "You MUST turn on Modify events for your device in Karabiner or Karabiner will ignore the remaps MST writes.",
+            imageName: "key-rebinder-karabiner-modify-events"
         )
     ]
 
@@ -264,6 +390,13 @@ final class SetupAssistantController: ObservableObject {
 
     init(defaults: UserDefaults = .standard) {
         isPresented = !defaults.bool(forKey: Self.completedKey)
+    }
+
+    func resetAndShow() {
+        UserDefaults.standard.removeObject(forKey: Self.completedKey)
+        UserDefaults.standard.synchronize()
+        stepIndex = 0
+        isPresented = true
     }
 
     func advance() -> ToolSection? {
@@ -312,6 +445,24 @@ struct SetupAssistantPopup: View {
                 .foregroundStyle(.white.opacity(0.82))
                 .fixedSize(horizontal: false, vertical: true)
 
+            if let warningText = step.warningText {
+                Text(warningText)
+                    .font(.system(size: 13, weight: .black))
+                    .underline()
+                    .foregroundStyle(Color.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if let imageName = step.imageName,
+               let image = setupImage(named: imageName) {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxHeight: 128)
+                    .clipShape(RoundedRectangle(cornerRadius: 7))
+                    .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.white.opacity(0.22), lineWidth: 1))
+            }
+
             HStack(spacing: 8) {
                 Button("Next", action: nextAction)
                     .buttonStyle(SetupAssistantPrimaryButtonStyle())
@@ -329,6 +480,13 @@ struct SetupAssistantPopup: View {
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.42), lineWidth: 1))
         .shadow(color: .black.opacity(0.42), radius: 18, y: 10)
         .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func setupImage(named name: String) -> NSImage? {
+        if let url = Bundle.main.url(forResource: name, withExtension: "png") {
+            return NSImage(contentsOf: url)
+        }
+        return NSImage(named: name)
     }
 }
 
@@ -357,8 +515,95 @@ struct SetupAssistantSecondaryButtonStyle: ButtonStyle {
     }
 }
 
+struct MSTSettingsView: View {
+    private static let contentSize = CGSize(width: 380, height: 244)
+
+    @ObservedObject var settings: AppSettingsController
+    @Environment(\.colorScheme) private var systemColorScheme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Header(title: "Settings")
+
+            VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Appearance".uppercased())
+                        .font(.system(size: 11, weight: .black))
+                        .foregroundStyle(.secondary)
+
+                    Picker("Appearance", selection: $settings.appearanceMode) {
+                        ForEach(MSTAppearanceMode.allCases) { mode in
+                            Text(mode.title).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                }
+
+                HStack {
+                    Label("Open on launch", systemImage: "power")
+                        .font(.system(size: 13, weight: .bold))
+                    Spacer()
+                    Toggle("", isOn: $settings.openOnLaunch)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                }
+
+                Button {
+                    settings.restartWalkthrough()
+                } label: {
+                    Label("Walkthrough", systemImage: "questionmark.circle")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(PrimaryMonoButtonStyle(active: false))
+            }
+
+            Spacer(minLength: 10)
+
+            Text("Credits: Developed by ducky8x.")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(24)
+        .background(Color.black)
+        .foregroundStyle(Color.white)
+        .tint(.white)
+        .frame(width: Self.contentSize.width, height: Self.contentSize.height)
+        .background(SettingsWindowSizer(size: Self.contentSize))
+        .modifier(MSTColorInvertModifier(enabled: settings.appearanceMode.shouldInvert(systemColorScheme: systemColorScheme)))
+    }
+}
+
+struct SettingsWindowSizer: NSViewRepresentable {
+    let size: CGSize
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        DispatchQueue.main.async {
+            configure(window: view.window)
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            configure(window: nsView.window)
+        }
+    }
+
+    private func configure(window: NSWindow?) {
+        guard let window else { return }
+        let nsSize = NSSize(width: size.width, height: size.height)
+        window.minSize = window.frameRect(forContentRect: NSRect(origin: .zero, size: nsSize)).size
+        window.maxSize = window.minSize
+        window.setContentSize(nsSize)
+        window.styleMask.remove(.resizable)
+    }
+}
+
 struct ComplexModeView: View {
     @EnvironmentObject private var hub: ToolHub
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         HStack(spacing: 0) {
@@ -384,7 +629,7 @@ struct ComplexModeView: View {
                             .frame(width: 20)
                         Text(section.rawValue)
                         Spacer()
-                        if section != .overview {
+                        if section != .overview && section != .keyRebinder {
                             Circle()
                                 .fill(hub.isEnabled(section) ? Color.white : Color.clear)
                                 .stroke(Color.white.opacity(0.65), lineWidth: 1)
@@ -406,16 +651,29 @@ struct ComplexModeView: View {
 
             Spacer()
 
-            Button {
-                hub.simpleMode = true
-            } label: {
-                Label("Simple Mode", systemImage: "rectangle.grid.2x2")
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 10)
-                    .padding(.horizontal, 12)
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.4)))
+            HStack(spacing: 8) {
+                Button {
+                    hub.simpleMode = true
+                } label: {
+                    Label("Simple", systemImage: "rectangle.grid.2x2")
+                        .font(.system(size: 12, weight: .bold))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 9)
+                        .padding(.horizontal, 10)
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.4)))
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    openWindow(id: "mst-settings")
+                } label: {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 14, weight: .bold))
+                        .frame(width: 36, height: 36)
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.4)))
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
             .padding(10)
         }
         .frame(width: 230)
@@ -466,18 +724,33 @@ struct SimpleModeView: View {
                             hub.toggle(section)
                         }
                     } label: {
-                        VStack(spacing: 10) {
-                            Image(systemName: section == .overview ? "arrow.up.left.and.arrow.down.right" : section.icon)
-                                .font(.system(size: 28, weight: .semibold))
-                            Text(section == .overview ? "Complex Mode" : section.rawValue)
-                                .font(.system(size: 15, weight: .bold))
-                            Text(section == .overview ? "Expand" : hub.isEnabled(section) ? "On" : "Off")
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(.secondary)
+                        ZStack(alignment: .topTrailing) {
+                            if section == .keyRebinder {
+                                Text(keyRebinderPresetTag)
+                                    .font(.system(size: 10, weight: .black))
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.62)
+                                    .padding(.vertical, 5)
+                                    .padding(.horizontal, 7)
+                                    .foregroundStyle(Color.black)
+                                    .background(Color.white)
+                                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                                    .padding(10)
+                            }
+
+                            VStack(spacing: 10) {
+                                Image(systemName: section == .overview ? "arrow.up.left.and.arrow.down.right" : section.icon)
+                                    .font(.system(size: 28, weight: .semibold))
+                                Text(section == .overview ? "Complex Mode" : section.rawValue)
+                                    .font(.system(size: 15, weight: .bold))
+                                Text(simpleModeStatus(for: section))
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 136)
                         }
-                        .frame(maxWidth: .infinity, minHeight: 136)
-                        .background(section != .overview && hub.isEnabled(section) ? Color.white : Color.black)
-                        .foregroundStyle(section != .overview && hub.isEnabled(section) ? Color.black : Color.white)
+                        .background(simpleModeBackground(for: section))
+                        .foregroundStyle(simpleModeForeground(for: section))
                         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white, lineWidth: 1))
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                     }
@@ -489,6 +762,26 @@ struct SimpleModeView: View {
         }
         .padding(28)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var keyRebinderPresetTag: String {
+        hub.keyRebinder.currentKarabinerProfileName.isEmpty ? "NO PRESET" : hub.keyRebinder.currentKarabinerProfileName
+    }
+
+    private func simpleModeStatus(for section: ToolSection) -> String {
+        if section == .overview { return "Expand" }
+        if section == .keyRebinder { return "Click to cycle" }
+        return hub.isEnabled(section) ? "On" : "Off"
+    }
+
+    private func simpleModeBackground(for section: ToolSection) -> Color {
+        if section == .keyRebinder || section == .overview { return .black }
+        return hub.isEnabled(section) ? .white : .black
+    }
+
+    private func simpleModeForeground(for section: ToolSection) -> Color {
+        if section == .keyRebinder || section == .overview { return .white }
+        return hub.isEnabled(section) ? .black : .white
     }
 }
 

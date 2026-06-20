@@ -80,6 +80,10 @@ struct KarabinerSimpleModificationGroup: Identifiable, Equatable {
     var isKeyboard: Bool
     var isMouse: Bool
     var mappings: [RebindMapping]
+
+    var isAllKeyboardsScope: Bool {
+        isKeyboard && !isMouse && vendorID == nil && productID == nil
+    }
 }
 
 private struct KarabinerCLIConnectedDevice: Decodable {
@@ -155,6 +159,7 @@ private struct KeyRebinderPersistedState: Codable {
     var presets: [RebindPreset]
     var selectedPresetID: UUID?
     var showAdvancedScopes: Bool?
+    var profileShortcuts: [String: ToolShortcut]?
 }
 
 @MainActor
@@ -167,6 +172,8 @@ final class KeyRebinderController: ObservableObject {
     @Published var detectedDevices: [RebindDevice] = []
     @Published var selectedSource: RebindEndpoint?
     @Published var recordingPresetID: UUID?
+    @Published var recordingProfileName: String?
+    @Published var profileShortcuts: [String: ToolShortcut] = [:]
     @Published private(set) var needsAccessibilityPermission = false
     @Published private(set) var karabinerStatus = KarabinerConnectionStatus(
         appURL: nil,
@@ -194,6 +201,7 @@ final class KeyRebinderController: ObservableObject {
     private var eventTap: CFMachPort?
     private var eventTapSource: CFRunLoopSource?
     private var lastTriggerTimes: [UUID: CFAbsoluteTime] = [:]
+    private var lastProfileTriggerTimes: [String: CFAbsoluteTime] = [:]
     private var lastObservedKarabinerModificationDate: Date?
     private var lastObservedKarabinerProfileName: String?
     private var karabinerPollCount = 0
@@ -219,8 +227,9 @@ final class KeyRebinderController: ObservableObject {
     }
 
     var visibleKarabinerGroups: [KarabinerSimpleModificationGroup] {
-        guard !showAdvancedScopes else { return karabinerSimpleGroups }
-        return karabinerSimpleGroups.filter { group in
+        let groups = karabinerSimpleGroups.filter { !$0.isAllKeyboardsScope }
+        guard !showAdvancedScopes else { return groups }
+        return groups.filter { group in
             group.id.hasSuffix(":profile") || (group.vendorID == nil && group.productID == nil)
         }
     }
@@ -383,14 +392,6 @@ final class KeyRebinderController: ObservableObject {
 
     private static let genericDevices = [
         RebindDevice(
-            id: "karabiner:any-keyboard",
-            name: "All Keyboards",
-            vendorID: nil,
-            productID: nil,
-            isKeyboard: true,
-            isMouse: false
-        ),
-        RebindDevice(
             id: "karabiner:any-mouse",
             name: "All Pointing Devices",
             vendorID: nil,
@@ -501,6 +502,51 @@ final class KeyRebinderController: ObservableObject {
         } catch {
             status = "Rebinds failed to update. Check your connection with Karabiner Elements and try again."
         }
+    }
+
+    func renameKarabinerProfile(from oldName: String, to newName: String) {
+        let trimmedName = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty, trimmedName != oldName else { return }
+
+        do {
+            var root = try Self.loadKarabinerRoot()
+            var profiles = root["profiles"] as? [[String: Any]] ?? []
+            guard let index = profiles.firstIndex(where: { ($0["name"] as? String) == oldName }) else {
+                status = "Rebinds failed to update. Check your connection with Karabiner Elements and try again."
+                return
+            }
+            guard !profiles.contains(where: { ($0["name"] as? String) == trimmedName }) else {
+                status = "Rebinds failed to update. Check your connection with Karabiner Elements and try again."
+                return
+            }
+
+            profiles[index]["name"] = trimmedName
+            root["profiles"] = profiles
+            try Self.writeKarabinerRoot(root)
+
+            if let shortcut = profileShortcuts.removeValue(forKey: oldName) {
+                profileShortcuts[trimmedName] = shortcut
+                save()
+            }
+
+            if currentKarabinerProfileName == oldName || karabinerProfiles.first(where: { $0.name == oldName })?.isCurrent == true {
+                selectKarabinerProfile(trimmedName)
+            } else {
+                status = "Rebinds updated"
+                refreshKarabinerConfiguration()
+            }
+        } catch {
+            status = "Rebinds failed to update. Check your connection with Karabiner Elements and try again."
+        }
+    }
+
+    func beginRecordingProfileShortcut(_ profileName: String) {
+        recordingProfileName = profileName
+    }
+
+    func clearProfileShortcut(_ profileName: String) {
+        profileShortcuts[profileName] = nil
+        save()
     }
 
     func selectKarabinerGroup(_ id: String) {
@@ -727,6 +773,17 @@ final class KeyRebinderController: ObservableObject {
     }
 
     private func handle(_ event: NSEvent) -> Bool {
+        if let recordingProfileName {
+            guard !event.isARepeat else { return false }
+            if let shortcut = ToolShortcut.from(event: event) {
+                profileShortcuts[recordingProfileName] = shortcut
+                self.recordingProfileName = nil
+                save()
+                status = "Rebinds updated"
+            }
+            return false
+        }
+
         if let recordingPresetID {
             guard !event.isARepeat else { return false }
             if let shortcut = ToolShortcut.from(event: event) {
@@ -737,15 +794,32 @@ final class KeyRebinderController: ObservableObject {
         }
 
         guard !event.isARepeat else { return true }
+        triggerProfile(matching: event)
         triggerPreset(matching: event)
         return true
     }
 
     private func handle(_ event: CGEvent) {
         guard event.getIntegerValueField(.keyboardEventAutorepeat) == 0 else { return }
+        for (profileName, shortcut) in profileShortcuts where shortcut.matches(event) {
+            triggerProfile(profileName)
+        }
         for preset in presets where preset.shortcut?.matches(event) == true {
             triggerPreset(preset.id)
         }
+    }
+
+    private func triggerProfile(matching event: NSEvent) {
+        for (profileName, shortcut) in profileShortcuts where shortcut.matches(event) {
+            triggerProfile(profileName)
+        }
+    }
+
+    private func triggerProfile(_ profileName: String) {
+        let now = CFAbsoluteTimeGetCurrent()
+        if let last = lastProfileTriggerTimes[profileName], now - last < 0.18 { return }
+        lastProfileTriggerTimes[profileName] = now
+        selectKarabinerProfile(profileName)
     }
 
     private func triggerPreset(matching event: NSEvent) {
@@ -880,6 +954,9 @@ final class KeyRebinderController: ObservableObject {
             guard isKeyboard || isMouse else {
                 continue
             }
+            guard !isAllKeyboardsScope(identifiers: identifiers) else {
+                continue
+            }
             let mods = device["simple_modifications"] as? [[String: Any]] ?? []
             groups.append(KarabinerSimpleModificationGroup(
                 id: "\(currentName):device:\(index)",
@@ -940,11 +1017,6 @@ final class KeyRebinderController: ObservableObject {
     }
 
     private static func deviceTitle(for identifiers: [String: Any]) -> String {
-        if identifiers["is_keyboard"] as? Bool == true,
-           identifiers["vendor_id"] == nil,
-           identifiers["product_id"] == nil {
-            return "All Keyboards"
-        }
         if identifiers["is_pointing_device"] as? Bool == true,
            identifiers["vendor_id"] == nil,
            identifiers["product_id"] == nil {
@@ -954,6 +1026,13 @@ final class KeyRebinderController: ObservableObject {
         let vendor = identifiers["vendor_id"].map { "\($0)" } ?? "any"
         let product = identifiers["product_id"].map { "\($0)" } ?? "any"
         return "\(type) [VID: \(vendor), PID: \(product)]"
+    }
+
+    private static func isAllKeyboardsScope(identifiers: [String: Any]) -> Bool {
+        identifiers["is_keyboard"] as? Bool == true &&
+            identifiers["is_pointing_device"] as? Bool != true &&
+            identifiers["vendor_id"] == nil &&
+            identifiers["product_id"] == nil
     }
 
     private static func identifiersDescription(_ identifiers: [String: Any]) -> String {
@@ -1063,6 +1142,7 @@ final class KeyRebinderController: ObservableObject {
             presets = state.presets
             selectedPresetID = state.selectedPresetID ?? state.presets.first?.id
             showAdvancedScopes = state.showAdvancedScopes ?? false
+            profileShortcuts = state.profileShortcuts ?? [:]
         }
 
         if presets.isEmpty {
@@ -1088,7 +1168,8 @@ final class KeyRebinderController: ObservableObject {
         let state = KeyRebinderPersistedState(
             presets: presets,
             selectedPresetID: selectedPresetID,
-            showAdvancedScopes: showAdvancedScopes
+            showAdvancedScopes: showAdvancedScopes,
+            profileShortcuts: profileShortcuts
         )
         if let data = try? JSONEncoder().encode(state) {
             UserDefaults.standard.set(data, forKey: Self.settingsKey)
@@ -1407,6 +1488,9 @@ struct KeyRebinderSettingsView: View {
     @ObservedObject var controller: KeyRebinderController
     @State private var targetKind: RebindEndpointKind = .keyboard
     @State private var visualSelectedSource: RebindEndpoint?
+    @State private var editingProfileName: String?
+    @State private var editingProfileText = ""
+    @FocusState private var focusedProfileName: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -1559,27 +1643,64 @@ struct KeyRebinderSettingsView: View {
                         .foregroundStyle(.secondary)
                 } else {
                     ForEach(controller.karabinerProfiles) { profile in
-                        Button {
-                            controller.selectKarabinerProfile(profile.name)
-                        } label: {
-                            HStack(spacing: 10) {
-                                Image(systemName: profile.isCurrent ? "largecircle.fill.circle" : "circle")
-                                    .frame(width: 18)
+                        HStack(spacing: 10) {
+                            Image(systemName: profile.isCurrent ? "largecircle.fill.circle" : "circle")
+                                .frame(width: 18)
+
+                            if editingProfileName == profile.name {
+                                TextField("Preset name", text: $editingProfileText)
+                                    .font(.system(size: 13, weight: .bold))
+                                    .textFieldStyle(.plain)
+                                    .focused($focusedProfileName, equals: profile.name)
+                                    .onSubmit {
+                                        finishEditingProfileName(oldName: profile.name)
+                                    }
+                                    .onExitCommand {
+                                        cancelEditingProfileName()
+                                    }
+                            } else {
                                 Text(profile.name)
                                     .font(.system(size: 13, weight: .bold))
-                                Spacer()
-                                Text(profile.isCurrent ? "Active" : "Switch")
-                                    .font(.system(size: 11, weight: .black))
-                                    .foregroundStyle(profile.isCurrent ? .secondary : .primary)
+                                    .lineLimit(1)
+                                    .onTapGesture(count: 2) {
+                                        startEditingProfileName(profile.name)
+                                    }
                             }
-                            .padding(.vertical, 8)
-                            .padding(.horizontal, 10)
-                            .background(profile.isCurrent ? Color.white : Color.clear)
-                            .foregroundStyle(profile.isCurrent ? Color.black : Color.white)
-                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.32)))
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                            Spacer()
+
+                            Button {
+                                controller.beginRecordingProfileShortcut(profile.name)
+                            } label: {
+                                Label(controller.recordingProfileName == profile.name ? "Press keys..." : profileShortcutTitle(for: profile.name), systemImage: "command")
+                            }
+                            .buttonStyle(.bordered)
+
+                            Button {
+                                controller.clearProfileShortcut(profile.name)
+                            } label: {
+                                Label("Clear", systemImage: "xmark")
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(controller.profileShortcuts[profile.name] == nil)
+
+                            Button(profile.isCurrent ? "Active" : "Switch") {
+                                controller.selectKarabinerProfile(profile.name)
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(profile.isCurrent)
                         }
-                        .buttonStyle(.plain)
+                        .padding(.vertical, 8)
+                        .padding(.horizontal, 10)
+                        .background(profile.isCurrent ? Color.white : Color.clear)
+                        .foregroundStyle(profile.isCurrent ? Color.black : Color.white)
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.32)))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .contentShape(RoundedRectangle(cornerRadius: 8))
+                        .onTapGesture {
+                            guard editingProfileName == nil else { return }
+                            controller.selectKarabinerProfile(profile.name)
+                        }
                     }
                 }
 
@@ -1601,6 +1722,29 @@ struct KeyRebinderSettingsView: View {
         }
     }
 
+    private func profileShortcutTitle(for profileName: String) -> String {
+        controller.profileShortcuts[profileName]?.displayName ?? "Set Keybind"
+    }
+
+    private func startEditingProfileName(_ profileName: String) {
+        editingProfileName = profileName
+        editingProfileText = profileName
+        DispatchQueue.main.async {
+            focusedProfileName = profileName
+        }
+    }
+
+    private func finishEditingProfileName(oldName: String) {
+        controller.renameKarabinerProfile(from: oldName, to: editingProfileText)
+        cancelEditingProfileName()
+    }
+
+    private func cancelEditingProfileName() {
+        editingProfileName = nil
+        editingProfileText = ""
+        focusedProfileName = nil
+    }
+
     private var remapScopeSection: some View {
         SectionBox(title: "Remap Scope") {
             VStack(alignment: .leading, spacing: 12) {
@@ -1616,7 +1760,7 @@ struct KeyRebinderSettingsView: View {
                     .toggleStyle(.switch)
                 }
 
-                Text(controller.showAdvancedScopes ? "Showing every Karabiner device scope." : "Showing only global scopes: For all devices, All Keyboards, and All Pointing Devices.")
+                Text(controller.showAdvancedScopes ? "Showing Karabiner device scopes." : "Showing only global scopes: For all devices and All Pointing Devices.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

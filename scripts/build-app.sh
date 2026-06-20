@@ -6,15 +6,23 @@ APP_NAME="MST"
 APP_DIR="$ROOT_DIR/dist/$APP_NAME.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
+RESOURCES_DIR="$CONTENTS_DIR/Resources"
 
 cd "$ROOT_DIR"
 swift build -c release
 
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR"
+mkdir -p "$RESOURCES_DIR"
 
 cp "$ROOT_DIR/.build/release/MST" "$MACOS_DIR/$APP_NAME"
 chmod +x "$MACOS_DIR/$APP_NAME"
+
+if [ -d "$ROOT_DIR/Resources" ]; then
+  cp -R "$ROOT_DIR/Resources/." "$RESOURCES_DIR/"
+fi
+
+xattr -cr "$APP_DIR" 2>/dev/null || true
 
 cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
