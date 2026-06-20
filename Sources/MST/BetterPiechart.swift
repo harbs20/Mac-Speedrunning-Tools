@@ -76,6 +76,7 @@ struct PersistedSettings: Codable {
 @MainActor
 final class ProjectorModel: ObservableObject {
     @Published var correctedImage: CGImage?
+    @Published var entityCounterImage: CGImage?
 }
 
 @MainActor
@@ -286,7 +287,7 @@ final class PiechartState: ObservableObject {
 
     private func scheduleLiveTimer() {
         liveTimer?.invalidate()
-        liveTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+        liveTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.liveTick()
             }
@@ -947,25 +948,43 @@ struct CorrectedPiePreviewCard: View {
 
 struct ProjectedPieView: View {
     var image: CGImage?
+    var entityCounterImage: CGImage?
 
     var body: some View {
         GeometryReader { proxy in
-            let side = min(proxy.size.width, proxy.size.height) * 0.84
+            let hasCounter = entityCounterImage != nil
+            let counterSpacing = hasCounter ? max(10, proxy.size.height * 0.04) : 0
+            let counterHeight = hasCounter ? min(34, proxy.size.height * 0.12) : 0
+            let pieSide = min(
+                proxy.size.width * 0.84,
+                (proxy.size.height - counterHeight - counterSpacing) * 0.92
+            )
 
-            ZStack {
-                if let image {
-                    Image(decorative: image, scale: 1.0)
+            VStack(spacing: counterSpacing) {
+                ZStack {
+                    if let image {
+                        Image(decorative: image, scale: 1.0)
+                            .resizable()
+                            .interpolation(.none)
+                            .scaledToFit()
+                            .frame(width: pieSide, height: pieSide)
+                            .clipShape(Circle())
+                    } else {
+                        Circle()
+                            .stroke(Color.white.opacity(0.72), lineWidth: 2)
+                            .frame(width: pieSide, height: pieSide)
+                    }
+                }
+
+                if let entityCounterImage {
+                    Image(decorative: entityCounterImage, scale: 1.0)
                         .resizable()
                         .interpolation(.none)
                         .scaledToFit()
-                        .frame(width: side, height: side)
-                        .clipShape(Circle())
-                } else {
-                    Circle()
-                        .stroke(Color.white.opacity(0.72), lineWidth: 2)
-                        .frame(width: side, height: side)
+                        .frame(maxWidth: pieSide * 0.9, maxHeight: counterHeight)
                 }
             }
+            .frame(width: proxy.size.width, height: proxy.size.height)
         }
     }
 }
@@ -974,7 +993,7 @@ struct ProjectorHostView: View {
     @ObservedObject var model: ProjectorModel
 
     var body: some View {
-        ProjectedPieView(image: model.correctedImage)
+        ProjectedPieView(image: model.correctedImage, entityCounterImage: model.entityCounterImage)
             .background(Color.clear)
             .ignoresSafeArea()
     }

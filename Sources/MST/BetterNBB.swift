@@ -2014,7 +2014,7 @@ final class AppCoordinator: SSEClientDelegate, InformationMessageClientDelegate 
         sse.connect()
         messages.delegate = self
         messages.connect()
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 0.20, repeats: true) { [weak self] _ in
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
             self?.sse.fetchSnapshot()
         }
     }
