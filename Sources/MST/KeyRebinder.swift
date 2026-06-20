@@ -548,6 +548,33 @@ final class KeyRebinderController: ObservableObject {
         }
     }
 
+    func setKarabinerSimpleModification(groupID: String, from: RebindEndpoint, to: RebindEndpoint) {
+        do {
+            try mutateKarabinerSimpleModifications(groupID: groupID) { modifications in
+                let fromObject = Self.simpleFromObject(from)
+                if from == to {
+                    modifications.removeAll { modification in
+                        NSDictionary(dictionary: modification["from"] as? [String: Any] ?? [:]).isEqual(to: fromObject)
+                    }
+                    return
+                }
+
+                let nextModification = Self.simpleModification(from: from, to: to)
+                if let index = modifications.firstIndex(where: { modification in
+                    NSDictionary(dictionary: modification["from"] as? [String: Any] ?? [:]).isEqual(to: fromObject)
+                }) {
+                    modifications[index] = nextModification
+                } else {
+                    modifications.append(nextModification)
+                }
+            }
+            status = "Rebinds updated"
+            refreshKarabinerConfiguration()
+        } catch {
+            status = "Rebinds failed to update. Check your connection with Karabiner Elements and try again."
+        }
+    }
+
     func deleteKarabinerSimpleModification(groupID: String, index: Int) {
         do {
             try mutateKarabinerSimpleModifications(groupID: groupID) { modifications in
@@ -1379,6 +1406,7 @@ private extension String {
 struct KeyRebinderSettingsView: View {
     @ObservedObject var controller: KeyRebinderController
     @State private var targetKind: RebindEndpointKind = .keyboard
+    @State private var visualSelectedSource: RebindEndpoint?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -1387,7 +1415,7 @@ struct KeyRebinderSettingsView: View {
             presetSection
             karabinerStatusSection
             remapScopeSection
-            remapEditorSection
+            visualRebindSection
             statusSection
         }
     }
@@ -1601,6 +1629,7 @@ struct KeyRebinderSettingsView: View {
                     ForEach(controller.visibleKarabinerGroups) { group in
                         Button {
                             controller.selectKarabinerGroup(group.id)
+                            visualSelectedSource = nil
                         } label: {
                             VStack(alignment: .leading, spacing: 5) {
                                 HStack {
@@ -1627,75 +1656,71 @@ struct KeyRebinderSettingsView: View {
         }
     }
 
-    private var remapEditorSection: some View {
+    private var visualRebindSection: some View {
         SectionBox(title: "Remaps") {
             if let group = controller.selectedKarabinerGroup {
-                VStack(alignment: .leading, spacing: 8) {
-                    if group.mappings.isEmpty {
-                        Text("No remaps in this scope yet.")
-                            .foregroundStyle(.secondary)
-                    }
-
-                    ForEach(Array(group.mappings.enumerated()), id: \.offset) { index, mapping in
-                        HStack(spacing: 14) {
-                            EndpointPicker(
-                                endpoint: mapping.from,
-                                endpoints: sourceEndpoints(for: group)
-                            ) { endpoint in
-                                controller.updateKarabinerSimpleModification(groupID: group.id, index: index, from: endpoint)
-                            }
-
-                            Spacer()
-                                .frame(maxWidth: 120)
-                                .overlay {
-                                    Image(systemName: "arrow.right")
-                                        .font(.system(size: 13, weight: .bold))
-                                        .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(group.title)
+                                .font(.system(size: 14, weight: .black))
+                            Text(visualInstruction)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if let visualSelectedSource {
+                            Button {
+                                if let index = group.mappings.firstIndex(where: { $0.from == visualSelectedSource }) {
+                                    controller.deleteKarabinerSimpleModification(groupID: group.id, index: index)
                                 }
-
-                            EndpointPicker(
-                                endpoint: mapping.to,
-                                endpoints: targetEndpoints
-                            ) { endpoint in
-                                controller.updateKarabinerSimpleModification(groupID: group.id, index: index, to: endpoint)
-                            }
-
-                            if mapping.warning != nil {
-                                Image(systemName: "exclamationmark.triangle.fill")
-                                    .foregroundStyle(.yellow)
-                                    .help(mapping.warning ?? "")
-                            }
-
-                            Spacer()
-
-                            Button(role: .destructive) {
-                                controller.deleteKarabinerSimpleModification(groupID: group.id, index: index)
                             } label: {
-                                Image(systemName: "trash")
+                                Label("Clear Selected", systemImage: "xmark.circle")
                             }
-                            .buttonStyle(.borderedProminent)
-                            .tint(.red)
-                        }
-                        .padding(.vertical, 4)
-
-                        if index < group.mappings.count - 1 {
-                            Divider().overlay(Color.white.opacity(0.14))
+                            .buttonStyle(.bordered)
+                            .disabled(group.mappings.contains(where: { $0.from == visualSelectedSource }) == false)
                         }
                     }
 
-                    Button {
-                        controller.addKarabinerSimpleModification()
-                    } label: {
-                        Label("Add item", systemImage: "plus.circle.fill")
+                    VisualRebindBoard(
+                        title: "Current Layout",
+                        subtitle: "Choose the key or mouse button to rebind.",
+                        mappings: group.mappings,
+                        selectedSource: visualSelectedSource,
+                        enabledSources: sourceEndpoints(for: group),
+                        enabledTargets: [],
+                        mode: .source
+                    ) { endpoint in
+                        visualSelectedSource = endpoint
                     }
-                    .buttonStyle(.bordered)
-                    .padding(.top, 8)
+
+                    VisualRebindBoard(
+                        title: "Rebind Options",
+                        subtitle: "Choose the output for the selected control.",
+                        mappings: [],
+                        selectedSource: nil,
+                        enabledSources: [],
+                        enabledTargets: targetEndpoints,
+                        mode: .target
+                    ) { endpoint in
+                        guard let visualSelectedSource else { return }
+                        controller.setKarabinerSimpleModification(groupID: group.id, from: visualSelectedSource, to: endpoint)
+                    }
+                    .opacity(visualSelectedSource == nil ? 0.48 : 1)
+                    .disabled(visualSelectedSource == nil)
                 }
             } else {
                 Text("Select a remap scope.")
                     .foregroundStyle(.secondary)
             }
         }
+    }
+
+    private var visualInstruction: String {
+        if let visualSelectedSource {
+            return "Selected \(visualSelectedSource.label.replacingOccurrences(of: "\n", with: " ")). Pick its output below."
+        }
+        return "Pick a source on the top board, then pick its output on the bottom board."
     }
 
     private func sourceEndpoints(for group: KarabinerSimpleModificationGroup) -> [RebindEndpoint] {
@@ -1875,9 +1900,125 @@ struct EndpointPicker: View {
     }
 }
 
+enum VisualRebindBoardMode {
+    case source
+    case target
+}
+
+struct VisualRebindBoard: View {
+    let title: String
+    let subtitle: String
+    let mappings: [RebindMapping]
+    let selectedSource: RebindEndpoint?
+    let enabledSources: [RebindEndpoint]
+    let enabledTargets: [RebindEndpoint]
+    let mode: VisualRebindBoardMode
+    let action: (RebindEndpoint) -> Void
+
+    private var enabledEndpoints: Set<RebindEndpoint> {
+        switch mode {
+        case .source:
+            Set(enabledSources)
+        case .target:
+            Set(enabledTargets)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title.uppercased())
+                        .font(.system(size: 11, weight: .black))
+                        .foregroundStyle(.secondary)
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if mode == .target {
+                    Image(systemName: "arrow.down.circle")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            HStack(alignment: .top, spacing: 12) {
+                RebindKeyboardView(
+                    mappings: mappings,
+                    selectedSource: selectedSource,
+                    enabledEndpoints: enabledEndpoints,
+                    chooseSource: action
+                )
+                .layoutPriority(1)
+
+                VisualMousePanel(
+                    mappings: mappings,
+                    selectedSource: selectedSource,
+                    enabledEndpoints: enabledEndpoints,
+                    action: action
+                )
+                .frame(width: 230)
+            }
+        }
+        .padding(12)
+        .background(Color.white.opacity(0.025))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.18)))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+struct VisualMousePanel: View {
+    let mappings: [RebindMapping]
+    let selectedSource: RebindEndpoint?
+    let enabledEndpoints: Set<RebindEndpoint>
+    let action: (RebindEndpoint) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("MOUSE")
+                .font(.system(size: 11, weight: .black))
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 6) {
+                mouseButton("button1", width: 70, height: 74)
+                mouseButton("button3", width: 46, height: 74)
+                mouseButton("button2", width: 70, height: 74)
+            }
+
+            VStack(spacing: 6) {
+                mouseButton("button4", width: 192, height: 36)
+                mouseButton("button5", width: 192, height: 36)
+                mouseButton("button6", width: 192, height: 36)
+                mouseButton("button7", width: 192, height: 36)
+                mouseButton("button8", width: 192, height: 42)
+            }
+        }
+        .padding(10)
+        .background(Color.white.opacity(0.035))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.16)))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func mouseButton(_ code: String, width: CGFloat, height: CGFloat) -> some View {
+        let endpoint = KeyRebinderLibrary.mouse.first { $0.code == code } ?? KeyRebinderLibrary.mouse[0]
+        let isEnabled = enabledEndpoints.contains(endpoint)
+        return RebindKeyButton(
+            endpoint: endpoint,
+            width: width,
+            height: height,
+            isSelected: selectedSource == endpoint,
+            isEnabled: isEnabled,
+            mapping: mappings.first { $0.from == endpoint },
+            action: { action(endpoint) }
+        )
+    }
+}
+
 struct RebindKeyboardView: View {
     let mappings: [RebindMapping]
     let selectedSource: RebindEndpoint?
+    var enabledEndpoints: Set<RebindEndpoint>? = nil
     let chooseSource: (RebindEndpoint) -> Void
 
     private var mainRows: [[KeyboardKeySpec]] {
@@ -1938,11 +2079,13 @@ struct RebindKeyboardView: View {
                 HStack(spacing: gap) {
                     ForEach(row) { key in
                         if let endpoint = key.endpoint {
+                            let isEnabled = enabledEndpoints?.contains(endpoint) ?? true
                             RebindKeyButton(
                                 endpoint: endpoint,
                                 width: keyWidth * CGFloat(key.widthUnits) + gap * CGFloat(max(0, key.widthUnits - 1)),
                                 height: keyHeight,
                                 isSelected: selectedSource == endpoint,
+                                isEnabled: isEnabled,
                                 mapping: mappings.first { $0.from == endpoint },
                                 action: { chooseSource(endpoint) }
                             )
@@ -1976,6 +2119,7 @@ struct KeyboardKeySpec: Identifiable {
 struct RebindMouseView: View {
     let mappings: [RebindMapping]
     let selectedSource: RebindEndpoint?
+    var enabledEndpoints: Set<RebindEndpoint>? = nil
     let chooseSource: (RebindEndpoint) -> Void
 
     var body: some View {
@@ -2014,6 +2158,7 @@ struct RebindMouseView: View {
             width: width,
             height: height,
             isSelected: selectedSource == endpoint,
+            isEnabled: enabledEndpoints?.contains(endpoint) ?? true,
             mapping: mappings.first { $0.from == endpoint },
             action: { chooseSource(endpoint) }
         )
@@ -2025,11 +2170,16 @@ struct RebindKeyButton: View {
     let width: CGFloat
     let height: CGFloat
     let isSelected: Bool
+    var isEnabled = true
     let mapping: RebindMapping?
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
+        Button {
+            if isEnabled {
+                action()
+            }
+        } label: {
             VStack(spacing: 3) {
                 keyText
                 mappingText
@@ -2039,8 +2189,10 @@ struct RebindKeyButton: View {
             .foregroundStyle(foregroundColor)
             .overlay(buttonBorder)
             .clipShape(RoundedRectangle(cornerRadius: 7))
+            .opacity(isEnabled ? 1 : 0.28)
         }
         .buttonStyle(.plain)
+        .disabled(!isEnabled)
         .help(helpText)
     }
 
