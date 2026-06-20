@@ -48,8 +48,8 @@ enum ToolSection: String, CaseIterable, Identifiable {
     case nbb = "BetterNBB"
     case backdrop = "WindowBackdrop"
     case piechart = "Better Piechart"
-    case piechartBeta = "BetterPiechart^2 (Beta)"
     case crosshair = "MACrosshair"
+    case keyRebinder = "Key Rebinder"
 
     var id: Self { self }
 
@@ -59,8 +59,8 @@ enum ToolSection: String, CaseIterable, Identifiable {
         case .nbb: "map"
         case .backdrop: "macwindow"
         case .piechart: "chart.pie"
-        case .piechartBeta: "sparkle.magnifyingglass"
         case .crosshair: "scope"
+        case .keyRebinder: "keyboard"
         }
     }
 
@@ -73,11 +73,11 @@ enum ToolSection: String, CaseIterable, Identifiable {
         case .backdrop:
             "A backdrop that goes behind your Minecraft instance."
         case .piechart:
-            "A piechart overlay that makes the piechart round. :)"
-        case .piechartBeta:
-            "A beta piechart projector that finds the F3 pie from the Minecraft window."
+            "A thin-mode F3 piechart projector that makes the piechart round. :)"
         case .crosshair:
             "Draws a crosshair on the screen."
+        case .keyRebinder:
+            "Syncs Karabiner profiles and simple modifications from inside MST."
         }
     }
 }
@@ -92,8 +92,8 @@ final class ToolHub: ObservableObject {
     @Published var nbb = BetterNBBToolController()
     @Published var backdrop = WindowBackdropState()
     @Published var piechart = PiechartState()
-    @Published var piechartBeta = PiechartBetaState()
     @Published var crosshair = MacrosshairController()
+    @Published var keyRebinder = KeyRebinderController()
     @Published var keybinds = ToolKeybindStore()
 
     private var cancellables: Set<AnyCancellable> = []
@@ -107,8 +107,8 @@ final class ToolHub: ObservableObject {
             nbb.objectWillChange.eraseToAnyPublisher(),
             backdrop.objectWillChange.eraseToAnyPublisher(),
             piechart.objectWillChange.eraseToAnyPublisher(),
-            piechartBeta.objectWillChange.eraseToAnyPublisher(),
             crosshair.objectWillChange.eraseToAnyPublisher(),
+            keyRebinder.objectWillChange.eraseToAnyPublisher(),
             keybinds.objectWillChange.eraseToAnyPublisher()
         ] {
             publisher
@@ -127,8 +127,8 @@ final class ToolHub: ObservableObject {
         case .nbb: nbb.isEnabled
         case .backdrop: backdrop.isBackdropEnabled
         case .piechart: piechart.isLive
-        case .piechartBeta: piechartBeta.isLive
         case .crosshair: crosshair.isEnabled
+        case .keyRebinder: keyRebinder.karabinerStatus.isConnected
         }
     }
 
@@ -141,11 +141,11 @@ final class ToolHub: ObservableObject {
         case .backdrop:
             backdrop.startOrStopBackdrop()
         case .piechart:
-            piechart.toggleProjector()
-        case .piechartBeta:
-            piechartBeta.toggle()
+            piechart.toggle()
         case .crosshair:
             crosshair.toggleTool()
+        case .keyRebinder:
+            keyRebinder.cycleKarabinerProfile()
         }
     }
 
@@ -158,11 +158,11 @@ final class ToolHub: ObservableObject {
         case .backdrop:
             backdrop.toggleBackdropVisibility()
         case .piechart:
-            piechart.toggleProjectorVisibility()
-        case .piechartBeta:
             break
         case .crosshair:
             crosshair.toggleVisibility()
+        case .keyRebinder:
+            keyRebinder.cycleKarabinerProfile()
         }
     }
 }
@@ -240,17 +240,17 @@ final class SetupAssistantController: ObservableObject {
         SetupAssistantStep(
             id: "better-piechart",
             section: .piechart,
-            bodyText: "Better Piechart: set a keybind, select the pie area, start the simulation, press the hotkey to show the projector, then adjust Projector Fit until the pie is round."
-        ),
-        SetupAssistantStep(
-            id: "better-piechart-beta",
-            section: .piechartBeta,
-            bodyText: "BetterPiechart^2 (Beta): refresh Minecraft windows, pick the instance, then start the beta capture so it can find and round the pie automatically."
+            bodyText: "Better Piechart: toggle your Thin mode, click Import Thin Setup, refresh Minecraft windows, choose the instance, then start the projector."
         ),
         SetupAssistantStep(
             id: "macrosshair",
             section: .crosshair,
             bodyText: "MACrosshair: set a keybind for showing and hiding the crosshair, then adjust its color, shape, and offset if needed."
+        ),
+        SetupAssistantStep(
+            id: "key-rebinder",
+            section: .keyRebinder,
+            bodyText: "Key Rebinder: connect Karabiner, choose a Karabiner profile, then edit the same simple modification rows Karabiner shows."
         )
     ]
 
@@ -435,10 +435,10 @@ struct ComplexModeView: View {
                     WindowBackdropSettingsView(state: hub.backdrop)
                 case .piechart:
                     BetterPiechartToolView(state: hub.piechart)
-                case .piechartBeta:
-                    BetterPiechartBetaToolView(state: hub.piechartBeta)
                 case .crosshair:
                     MacrosshairSettingsView(controller: hub.crosshair)
+                case .keyRebinder:
+                    KeyRebinderSettingsView(controller: hub.keyRebinder)
                 }
             }
             .padding(28)
@@ -451,7 +451,7 @@ struct ComplexModeView: View {
 struct SimpleModeView: View {
     @EnvironmentObject private var hub: ToolHub
 
-    private let buttons: [ToolSection] = [.nbb, .backdrop, .piechart, .piechartBeta, .crosshair, .overview]
+    private let buttons: [ToolSection] = [.nbb, .backdrop, .piechart, .crosshair, .keyRebinder, .overview]
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 14), count: 2)
 
     var body: some View {
@@ -500,18 +500,38 @@ struct OverviewView: View {
             Header(title: "Overview")
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), spacing: 12)], spacing: 12) {
                 ForEach(ToolSection.allCases.filter { $0 != .overview }) { section in
-                    ToolCard(section: section, isOn: hub.isEnabled(section)) {
+                    ToolCard(
+                        section: section,
+                        isOn: hub.isEnabled(section),
+                        statusText: statusText(for: section),
+                        buttonTitle: buttonTitle(for: section)
+                    ) {
                         hub.toggle(section)
                     }
                 }
             }
         }
     }
+
+    private func statusText(for section: ToolSection) -> String {
+        if section == .keyRebinder {
+            return hub.keyRebinder.currentKarabinerProfileName.isEmpty
+                ? "NO PRESET"
+                : hub.keyRebinder.currentKarabinerProfileName
+        }
+        return hub.isEnabled(section) ? "ON" : "OFF"
+    }
+
+    private func buttonTitle(for section: ToolSection) -> String {
+        section == .keyRebinder ? "Next Preset" : hub.isEnabled(section) ? "Turn Off" : "Turn On"
+    }
 }
 
 struct ToolCard: View {
     let section: ToolSection
     let isOn: Bool
+    let statusText: String
+    let buttonTitle: String
     let action: () -> Void
 
     var body: some View {
@@ -520,8 +540,10 @@ struct ToolCard: View {
                 Image(systemName: section.icon)
                     .font(.system(size: 22, weight: .semibold))
                 Spacer()
-                Text(isOn ? "ON" : "OFF")
+                Text(statusText)
                     .font(.system(size: 11, weight: .black))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.65)
             }
             Text(section.rawValue)
                 .font(.system(size: 18, weight: .bold))
@@ -531,7 +553,7 @@ struct ToolCard: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Button(isOn ? "Turn Off" : "Turn On", action: action)
+            Button(buttonTitle, action: action)
                 .buttonStyle(PrimaryMonoButtonStyle(active: isOn))
         }
         .padding(16)
