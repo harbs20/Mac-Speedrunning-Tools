@@ -5,13 +5,13 @@ import CoreMedia
 import SwiftUI
 import VideoToolbox
 
-struct PiechartBetaWindowCandidate: Identifiable, Hashable {
+struct PiechartWindowCandidate: Identifiable, Hashable {
     let id: CGWindowID
     let displayName: String
     let sizeDescription: String
 }
 
-private struct PiechartBetaPersistedSettings: Codable {
+private struct PiechartPersistedSettings: Codable {
     private static let templateHeightBase = 0.50
     private static let cropSizeBase = 0.45
     private static let stretchMultiplierBase = 0.93
@@ -143,7 +143,7 @@ private struct PiechartBetaPersistedSettings: Codable {
     }
 }
 
-private struct PiechartBetaDetection {
+private struct PiechartDetection {
     let rawCrop: CGImage
     let correctedImage: CGImage
     let entityCounterImage: CGImage?
@@ -151,9 +151,10 @@ private struct PiechartBetaDetection {
 }
 
 @MainActor
-final class PiechartBetaState: ObservableObject {
-    private static let betaSettingsKey = "mts.piechartbeta.settings.v3"
+final class PiechartState: ObservableObject {
+    private static let settingsKey = "mts.betterpiechart.settings.v1"
     private static let legacySettingsKeys = [
+        "mts.piechartbeta.settings.v3",
         "mts.piechartbeta.settings.v2",
         "mts.piechartbeta.settings.v1"
     ]
@@ -166,7 +167,7 @@ final class PiechartBetaState: ObservableObject {
     @Published private(set) var isProjectorVisible = false
     @Published var projectorAlwaysOnTop = true
     @Published var projectorShowTitlebar = false
-    @Published private(set) var availableWindows: [PiechartBetaWindowCandidate] = []
+    @Published private(set) var availableWindows: [PiechartWindowCandidate] = []
     @Published var selectedWindowID: CGWindowID?
     @Published var rawPiePreview: CGImage?
     @Published var correctedPreview: CGImage?
@@ -186,8 +187,8 @@ final class PiechartBetaState: ObservableObject {
     private let projectorModel = ProjectorModel()
     private var shareableWindows: [SCWindow] = []
     private var stream: SCStream?
-    private var streamOutput: PiechartBetaStreamOutput?
-    private let sampleQueue = DispatchQueue(label: "MST.BetterPiechartBeta.SampleQueue")
+    private var streamOutput: PiechartStreamOutput?
+    private let sampleQueue = DispatchQueue(label: "MST.BetterPiechart.SampleQueue")
     private var captureScale = 1.0
     private var lastDetectionTime = CFAbsoluteTimeGetCurrent()
     private var lastPreviewUpdateTime: CFAbsoluteTime = 0
@@ -199,7 +200,7 @@ final class PiechartBetaState: ObservableObject {
     private var selectedWindowSizeDescription: String?
 
     var primaryToggleTitle: String {
-        isLive ? "Stop BetterPiechart^2" : "Start BetterPiechart^2"
+        isLive ? "Stop Better Piechart" : "Start Better Piechart"
     }
 
     var effectiveTemplateHeightRatio: Double {
@@ -349,7 +350,7 @@ final class PiechartBetaState: ObservableObject {
 
             shareableWindows = minecraftWindows
             availableWindows = minecraftWindows.map { window in
-                return PiechartBetaWindowCandidate(
+                return PiechartWindowCandidate(
                     id: window.windowID,
                     displayName: Self.displayName(for: window),
                     sizeDescription: Self.sizeDescription(for: window)
@@ -388,7 +389,7 @@ final class PiechartBetaState: ObservableObject {
 
         if !CGPreflightScreenCaptureAccess() {
             guard CGRequestScreenCaptureAccess() else {
-                statusText = "Screen Recording permission is required for BetterPiechart^2."
+                statusText = "Screen Recording permission is required for Better Piechart."
                 return
             }
         }
@@ -472,7 +473,7 @@ final class PiechartBetaState: ObservableObject {
         config.width = captureGeometry.width
         config.height = captureGeometry.height
 
-        let output = PiechartBetaStreamOutput { [weak self] image in
+        let output = PiechartStreamOutput { [weak self] image in
             Task { @MainActor in
                 self?.receiveWindowFrame(image)
             }
@@ -608,7 +609,7 @@ final class PiechartBetaState: ObservableObject {
         projectorModel.correctedImage = corrected
         projectorModel.entityCounterImage = entityCounterPreview
         applyProjectorVisibility()
-        statusText = "Updated BetterPiechart^2 fit."
+        statusText = "Updated Better Piechart fit."
     }
 
     private func applyProjectorVisibility() {
@@ -622,7 +623,7 @@ final class PiechartBetaState: ObservableObject {
         return shareableWindows.first { $0.windowID == selectedWindowID }
     }
 
-    private func restoredWindowID(from windows: [PiechartBetaWindowCandidate]) -> CGWindowID? {
+    private func restoredWindowID(from windows: [PiechartWindowCandidate]) -> CGWindowID? {
         if let selectedWindowDisplayName,
            let selectedWindowSizeDescription,
            let exact = windows.first(where: {
@@ -663,11 +664,11 @@ final class PiechartBetaState: ObservableObject {
         persistSettings()
     }
 
-    private static func loadSettingsFromDefaults() -> PiechartBetaPersistedSettings? {
+    private static func loadSettingsFromDefaults() -> PiechartPersistedSettings? {
         let defaults = UserDefaults.standard
-        for key in [betaSettingsKey] + legacySettingsKeys {
+        for key in [settingsKey] + legacySettingsKeys {
             guard let data = defaults.data(forKey: key),
-                  let settings = try? JSONDecoder().decode(PiechartBetaPersistedSettings.self, from: data) else {
+                  let settings = try? JSONDecoder().decode(PiechartPersistedSettings.self, from: data) else {
                 continue
             }
             return settings
@@ -677,7 +678,7 @@ final class PiechartBetaState: ObservableObject {
     }
 
     private func persistSettings() {
-        let settings = PiechartBetaPersistedSettings(
+        let settings = PiechartPersistedSettings(
             projectorAlwaysOnTop: projectorAlwaysOnTop,
             projectorShowTitlebar: projectorShowTitlebar,
             projectorFPS: projectorFPS,
@@ -696,7 +697,7 @@ final class PiechartBetaState: ObservableObject {
 
         guard let data = try? JSONEncoder().encode(settings) else { return }
         let defaults = UserDefaults.standard
-        defaults.set(data, forKey: Self.betaSettingsKey)
+        defaults.set(data, forKey: Self.settingsKey)
         defaults.synchronize()
     }
 
@@ -760,7 +761,7 @@ final class PiechartBetaState: ObservableObject {
         stretchMultiplier: Double,
         templateCenterNormalized: CGPoint,
         entityCounterYOffset: Double
-    ) -> PiechartBetaDetection? {
+    ) -> PiechartDetection? {
         let factor = max(1, min(2, Int(captureScale.rounded(.down))))
         let cropWidth = min(image.width, 340 * factor)
         let cropHeight = min(image.height, 340 * factor)
@@ -784,7 +785,7 @@ final class PiechartBetaState: ObservableObject {
             return nil
         }
 
-        return PiechartBetaDetection(
+        return PiechartDetection(
             rawCrop: rawCrop,
             correctedImage: corrected,
             entityCounterImage: entityCounterImage,
@@ -937,7 +938,7 @@ final class PiechartBetaState: ObservableObject {
     }
 }
 
-private final class PiechartBetaStreamOutput: NSObject, SCStreamOutput, SCStreamDelegate {
+private final class PiechartStreamOutput: NSObject, SCStreamOutput, SCStreamDelegate {
     private let onFrame: (CGImage) -> Void
     private let onError: (Error) -> Void
 
@@ -983,12 +984,12 @@ private final class PiechartBetaStreamOutput: NSObject, SCStreamOutput, SCStream
     }
 }
 
-struct BetterPiechartBetaToolView: View {
-    @ObservedObject var state: PiechartBetaState
+struct BetterPiechartToolView: View {
+    @ObservedObject var state: PiechartState
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Header(title: "BetterPiechart^2 (Beta)", subtitle: "Thin-mode auto projector for the F3 piechart.")
+            Header(title: "Better Piechart", subtitle: "Thin-mode auto projector for the F3 piechart.")
 
             Button(action: state.toggle) {
                 Label(state.primaryToggleTitle, systemImage: state.isLive ? "stop.fill" : "sparkle.magnifyingglass")
@@ -1127,7 +1128,7 @@ struct BetterPiechartBetaToolView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Thin Pie Crop")
                         .font(.headline)
-                    PiechartBetaTemplatePreviewCard(
+                    PiechartTemplatePreviewCard(
                         image: state.rawPiePreview,
                         templateHeightRatio: state.effectiveTemplateHeightRatio,
                         templateCenterNormalized: state.templateCenterNormalized,
@@ -1146,7 +1147,7 @@ struct BetterPiechartBetaToolView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Entity Counter")
                         .font(.headline)
-                    PiechartBetaEntityCounterPreviewCard(image: state.entityCounterPreview)
+                    PiechartEntityCounterPreviewCard(image: state.entityCounterPreview)
                         .frame(height: 70)
                 }
             }
@@ -1167,7 +1168,7 @@ struct BetterPiechartBetaToolView: View {
     }
 }
 
-struct PiechartBetaEntityCounterPreviewCard: View {
+struct PiechartEntityCounterPreviewCard: View {
     var image: CGImage?
 
     var body: some View {
@@ -1190,7 +1191,7 @@ struct PiechartBetaEntityCounterPreviewCard: View {
     }
 }
 
-struct PiechartBetaTemplatePreviewCard: View {
+struct PiechartTemplatePreviewCard: View {
     var image: CGImage?
     var templateHeightRatio: Double
     var templateCenterNormalized: CGPoint
@@ -1259,7 +1260,7 @@ struct PiechartBetaTemplatePreviewCard: View {
                     VStack(spacing: 8) {
                         Image(systemName: "scope")
                             .font(.system(size: 28))
-                        Text("Start the beta projector to move the pie template.")
+                        Text("Start Better Piechart to move the pie template.")
                             .foregroundStyle(.secondary)
                     }
                 }
