@@ -1,30 +1,35 @@
 # MST
 
-MST combines BetterNBB, WindowBackdrop, Better Piechart, and MACrosshair into one black-and-white macOS control app.
+MST combines BetterNBB, WindowBackdrop, Better Piechart, MACrosshair, and Key Rebinder into one app.
+
+Current version: 2.0.0
+MST 2.0.0 adds Key Rebinder with visual keyboard and mouse remapping through Karabiner Elements, per-preset hotkeys, light mode, a new settings window, and a new upgraded Better Piechart.
 
 ## Requirements
 
 - macOS 14 or newer
-- Apple Swift toolchain for source installs or local builds
+- Apple Swift toolchain (Optional: for source installs or local builds)
 - Accessibility permission for global keybinds while another app is focused
 - Screen Recording permission for screen-capture based overlays such as Better Piechart
+- Karabiner-Elements for Key Rebinder
 
-If macOS blocks the app the first time you open it, right-click the app and choose **Open**.
+If macOS blocks the app the first time you open it, right-click the app and choose **Open**, or you can go to System Settings -> Privacy and Security, scroll all the way down, and open the app from there.
 
 ## Installation
 
 ### DMG release
 
-1. Open `MST-<version>-macOS.dmg`.
+1. Open `MST-<version>-macOS.dmg.zip`.
 2. Drag `MST.app` to `Applications`.
 3. Open the app from `Applications`.
-4. Grant Accessibility or Screen Recording permissions if macOS asks.
+4. Grant Accessibility or Screen Recording permissions if MST asks.
 
 ### Source installer ZIP
 
 1. Unzip `MST-<version>-source-installer.zip`.
 2. Double-click `compile_and_install.command`.
 3. The installer builds the app from the included `README.md`, `Package.swift`, and `Sources/` folder, installs it into `Applications`, and opens it.
+4. Move the file into the trash.
 
 ### Build from source
 
@@ -55,8 +60,9 @@ The main app has a sidebar for:
 - WindowBackdrop
 - Better Piechart
 - MACrosshair
+- Key Rebinder
 
-Complex Mode shows the full settings for the selected tool. Simple Mode condenses the app into a 2x3 grid of large toggle buttons plus a button to return to Complex Mode.
+Complex Mode shows the full settings for the selected tool. Simple Mode condenses the app into a grid of large toggle buttons plus a button to return to Complex Mode.
 
 ## Global Keybinds
 
@@ -66,8 +72,9 @@ Each tool can have its own keybind. Keybinds do not start the tool; they toggle 
 - WindowBackdrop: show or hide the backdrop
 - Better Piechart: show or hide the piechart projector
 - MACrosshair: show or hide the crosshair
+- Key Rebinder: activate preset-specific hotkeys
 
-Enable Accessibility permission for MST if keybinds should work while Minecraft or another app is focused.
+Note: For the keybinds to work outside of MST, you must enable Accessibility permission for MST.
 
 ## Features
 
@@ -97,9 +104,9 @@ WindowBackdrop draws a backdrop behind your Minecraft instance.
 
 ### Better Piechart
 
-Better Piechart creates a projector overlay that makes the Minecraft piechart round.
+Better Piechart creates a projector overlay that projects the Minecraft piechart round and displays the e-counter.
 
-- Start or stop the piechart capture/projector
+- Start or stop the piechart projector
 - Show or hide the projector with a keybind
 - Keep the projector always on top
 - Show the titlebar when positioning the projector
@@ -109,7 +116,7 @@ Better Piechart creates a projector overlay that makes the Minecraft piechart ro
 
 ### MACrosshair
 
-MACrosshair draws a crosshair on the screen.
+MACrosshair draws a crosshair on the screen for MCSR Oneshot.
 
 - Start or stop the crosshair
 - Show or hide it with a keybind
@@ -117,6 +124,14 @@ MACrosshair draws a crosshair on the screen.
 - Adjust line length, line thickness, center dot, dot size, and opacity
 - Offset the crosshair position and reset it when needed
 
-## Settings
+### Key Rebinder
 
-Tool settings are saved so they survive app quits, force quits, and tool start/stop toggles.
+Key Rebinder syncs Karabiner-Elements profiles and simple modifications from inside MST.
+
+- Detect Karabiner connection status and open setup links when needed
+- View and switch Karabiner profiles from MST
+- Add, rename, enable, disable, and delete presets
+- Assign a global hotkey to each preset
+- Rebind keyboard keys and mouse buttons through a visual keyboard-and-mouse layout
+- Sync remaps back to Karabiner so the same rows appear in Karabiner-Elements
+- Show warnings for key-to-mouse-button remaps that cannot key repeat
