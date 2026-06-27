@@ -17,8 +17,12 @@ struct RebindEndpoint: Codable, Equatable, Identifiable, Hashable {
     var kind: RebindEndpointKind
     var code: String
     var label: String
+    var modifiers: [String]? = nil
 
-    var id: String { "\(kind.rawValue):\(code)" }
+    var id: String {
+        let modifierSuffix = (modifiers ?? []).isEmpty ? "" : ":\((modifiers ?? []).joined(separator: "+"))"
+        return "\(kind.rawValue):\(code)\(modifierSuffix)"
+    }
 }
 
 struct RebindMapping: Codable, Identifiable, Equatable {
@@ -1152,12 +1156,28 @@ final class KeyRebinderController: ObservableObject {
     private static func endpoint(from object: [String: Any]?) -> RebindEndpoint? {
         guard let object else { return nil }
         if let code = object["key_code"] as? String {
+            let modifiers = normalizedOutputModifiers(from: object["modifiers"])
+            if !modifiers.isEmpty,
+               let endpoint = KeyRebinderLibrary.allKeyboardOutputs.first(where: { $0.code == code && normalizedModifiers($0.modifiers) == modifiers }) {
+                return endpoint
+            }
             return KeyRebinderLibrary.keyboard.first { $0.code == code } ?? RebindEndpoint(kind: .keyboard, code: code, label: code)
         }
         if let code = object["pointing_button"] as? String {
             return KeyRebinderLibrary.mouse.first { $0.code == code } ?? RebindEndpoint(kind: .mouse, code: code, label: code)
         }
         return nil
+    }
+
+    private static func normalizedOutputModifiers(from value: Any?) -> [String] {
+        if let modifiers = value as? [String] {
+            return normalizedModifiers(modifiers)
+        }
+        return []
+    }
+
+    private static func normalizedModifiers(_ modifiers: [String]?) -> [String] {
+        (modifiers ?? []).sorted()
     }
 
     private static func deviceTitle(for identifiers: [String: Any]) -> String {
@@ -1460,12 +1480,17 @@ final class KeyRebinderController: ObservableObject {
     }
 
     private static func toObject(_ endpoint: RebindEndpoint) -> [String: Any] {
+        var object: [String: Any]
         switch endpoint.kind {
         case .keyboard:
-            return ["key_code": endpoint.code]
+            object = ["key_code": endpoint.code]
         case .mouse:
-            return ["pointing_button": endpoint.code]
+            object = ["pointing_button": endpoint.code]
         }
+        if let modifiers = endpoint.modifiers, !modifiers.isEmpty {
+            object["modifiers"] = modifiers
+        }
+        return object
     }
 
     private func updatePreset(_ id: UUID, apply: (inout RebindPreset) -> Void) {
@@ -1559,6 +1584,17 @@ enum KeyRebinderLibrary {
         key("keypad_0", "0 Ins"), key("keypad_period", ". Del")
     ]
 
+    static let accentKeyboard: [RebindEndpoint] = [
+        accent("q", "œ"), accent("w", "∑"), accent("e", "´"), accent("r", "®"), accent("t", "†"), accent("y", "¥"), accent("u", "¨"), accent("i", "ˆ"), accent("o", "ø"), accent("p", "π"),
+        accent("a", "å"), accent("s", "ß"), accent("d", "∂"), accent("f", "ƒ"), accent("g", "©"), accent("h", "˙"), accent("j", "∆"), accent("k", "˚"), accent("l", "¬"),
+        accent("z", "Ω"), accent("x", "≈"), accent("c", "ç"), accent("v", "√"), accent("b", "∫"), accent("n", "˜"), accent("m", "µ"),
+        accent("spacebar", "NBSP")
+    ]
+
+    static var allKeyboardOutputs: [RebindEndpoint] {
+        keyboard + accentKeyboard
+    }
+
     static let mouse: [RebindEndpoint] = [
         mouse("button1", "Left Click"),
         mouse("button2", "Right Click"),
@@ -1572,6 +1608,10 @@ enum KeyRebinderLibrary {
 
     private static func key(_ code: String, _ label: String) -> RebindEndpoint {
         RebindEndpoint(kind: .keyboard, code: code, label: label)
+    }
+
+    private static func accent(_ code: String, _ label: String) -> RebindEndpoint {
+        RebindEndpoint(kind: .keyboard, code: code, label: label, modifiers: ["left_option"])
     }
 
     private static func mouse(_ code: String, _ label: String) -> RebindEndpoint {
@@ -1685,12 +1725,17 @@ private enum KarabinerConfigurationWriter {
     }
 
     private static func toObject(_ endpoint: RebindEndpoint) -> [String: Any] {
+        var object: [String: Any]
         switch endpoint.kind {
         case .keyboard:
-            return ["key_code": endpoint.code]
+            object = ["key_code": endpoint.code]
         case .mouse:
-            return ["pointing_button": endpoint.code]
+            object = ["pointing_button": endpoint.code]
         }
+        if let modifiers = endpoint.modifiers, !modifiers.isEmpty {
+            object["modifiers"] = modifiers
+        }
+        return object
     }
 
     private static func deviceIdentifiers(for preset: RebindPreset, source: RebindEndpoint) -> [String: Any]? {
@@ -1877,6 +1922,7 @@ struct KeyRebinderSettingsView: View {
     @State private var visualSelectedSource: RebindEndpoint?
     @State private var visualLayerMode: RebindLayerViewMode = .rebinded
     @State private var showGrabbedLayerControls = false
+    @State private var showAccentTargets = false
     @State private var editingProfileName: String?
     @State private var editingProfileText = ""
     @FocusState private var focusedProfileName: String?
@@ -2254,7 +2300,8 @@ struct KeyRebinderSettingsView: View {
                         selectedSource: nil,
                         enabledSources: [],
                         enabledTargets: targetEndpoints,
-                        mode: .target
+                        mode: .target,
+                        accentMode: showAccentTargets
                     ) { endpoint in
                         guard let visualSelectedSource else { return }
                         guard visualLayerMode.isEditable else { return }
@@ -2266,6 +2313,12 @@ struct KeyRebinderSettingsView: View {
                     }
                     .opacity(visualSelectedSource == nil || !visualLayerMode.isEditable ? 0.48 : 1)
                     .disabled(visualSelectedSource == nil || !visualLayerMode.isEditable)
+
+                    HStack {
+                        Spacer()
+                        Toggle("Accents", isOn: $showAccentTargets)
+                            .toggleStyle(.switch)
+                    }
                 }
             } else {
                 Text("Select a remap scope.")
@@ -2325,7 +2378,7 @@ struct KeyRebinderSettingsView: View {
     }
 
     private var targetEndpoints: [RebindEndpoint] {
-        KeyRebinderLibrary.keyboard + KeyRebinderLibrary.mouse
+        KeyRebinderLibrary.allKeyboardOutputs + KeyRebinderLibrary.mouse
     }
 
     private var deviceSection: some View {
@@ -2506,6 +2559,7 @@ struct VisualRebindBoard: View {
     let enabledSources: [RebindEndpoint]
     let enabledTargets: [RebindEndpoint]
     let mode: VisualRebindBoardMode
+    var accentMode = false
     let action: (RebindEndpoint) -> Void
 
     private var enabledEndpoints: Set<RebindEndpoint> {
@@ -2541,6 +2595,7 @@ struct VisualRebindBoard: View {
                     mappings: mappings,
                     selectedSource: selectedSource,
                     enabledEndpoints: enabledEndpoints,
+                    accentMode: mode == .target && accentMode,
                     chooseSource: action
                 )
                 .layoutPriority(1)
@@ -2612,6 +2667,7 @@ struct RebindKeyboardView: View {
     let mappings: [RebindMapping]
     let selectedSource: RebindEndpoint?
     var enabledEndpoints: Set<RebindEndpoint>? = nil
+    var accentMode = false
     let chooseSource: (RebindEndpoint) -> Void
 
     private var mainRows: [[KeyboardKeySpec]] {
@@ -2671,7 +2727,7 @@ struct RebindKeyboardView: View {
             ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                 HStack(spacing: gap) {
                     ForEach(row) { key in
-                        if let endpoint = key.endpoint {
+                        if let endpoint = endpoint(for: key) {
                             let isEnabled = enabledEndpoints?.contains(endpoint) ?? true
                             RebindKeyButton(
                                 endpoint: endpoint,
@@ -2700,6 +2756,16 @@ struct RebindKeyboardView: View {
             guard let endpoint = KeyRebinderLibrary.keyboard.first(where: { $0.code == code }) else { return nil }
             return KeyboardKeySpec(endpoint: endpoint, widthUnits: width)
         }
+    }
+
+    private func endpoint(for key: KeyboardKeySpec) -> RebindEndpoint? {
+        guard let endpoint = key.endpoint else { return nil }
+        guard accentMode,
+              let accentEndpoint = KeyRebinderLibrary.accentKeyboard.first(where: { $0.code == endpoint.code })
+        else {
+            return endpoint
+        }
+        return accentEndpoint
     }
 }
 
