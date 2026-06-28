@@ -147,3 +147,5 @@ MST can update itself automatically without leaving the app.
 - Shows an update banner in the sidebar when a newer version is available
 - Downloading and installing happens in the background
 - MST closes, replaces itself with the new version, and relaunches automatically
+
+Auto-update was inspired by [harbs20](https://github.com/harbs20)'s contribution.
