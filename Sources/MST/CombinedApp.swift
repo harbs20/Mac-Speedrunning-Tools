@@ -197,6 +197,7 @@ final class ToolHub: ObservableObject {
     @Published var keyRebinder = KeyRebinderController()
     @Published var keybinds = ToolKeybindStore()
     @Published var appSettings = AppSettingsController()
+    @Published var updater = AutoUpdater()
 
     private var cancellables: Set<AnyCancellable> = []
 
@@ -205,6 +206,8 @@ final class ToolHub: ObservableObject {
             self?.triggerShortcut(section)
         }
 
+        updater.checkOnLaunch()
+
         for publisher in [
             nbb.objectWillChange.eraseToAnyPublisher(),
             backdrop.objectWillChange.eraseToAnyPublisher(),
@@ -212,7 +215,8 @@ final class ToolHub: ObservableObject {
             crosshair.objectWillChange.eraseToAnyPublisher(),
             keyRebinder.objectWillChange.eraseToAnyPublisher(),
             keybinds.objectWillChange.eraseToAnyPublisher(),
-            appSettings.objectWillChange.eraseToAnyPublisher()
+            appSettings.objectWillChange.eraseToAnyPublisher(),
+            updater.objectWillChange.eraseToAnyPublisher()
         ] {
             publisher
                 .sink { [weak self] _ in
@@ -722,6 +726,9 @@ struct ComplexModeView: View {
 
             Spacer()
 
+            UpdateBannerView(updater: hub.updater)
+                .padding(.horizontal, 10)
+
             HStack(spacing: 8) {
                 Button {
                     hub.simpleMode = true
@@ -853,6 +860,96 @@ struct SimpleModeView: View {
     private func simpleModeForeground(for section: ToolSection) -> Color {
         if section == .keyRebinder || section == .overview { return .white }
         return hub.isEnabled(section) ? .black : .white
+    }
+}
+
+struct UpdateBannerView: View {
+    @ObservedObject var updater: AutoUpdater
+
+    var body: some View {
+        switch updater.updateState {
+        case .available(let version, _):
+            bannerRow(
+                icon: "arrow.down.circle",
+                text: "v\(version) available",
+                action: { updater.startUpdate() },
+                actionLabel: "Update"
+            )
+
+        case .downloading(let progress):
+            HStack(spacing: 8) {
+                if let p = progress {
+                    ProgressView(value: p)
+                        .progressViewStyle(.linear)
+                        .frame(maxWidth: .infinity)
+                        .tint(.white)
+                } else {
+                    ProgressView()
+                        .progressViewStyle(.circular)
+                        .scaleEffect(0.6)
+                        .frame(width: 20)
+                    Text("Downloading…")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding(.vertical, 8)
+            .padding(.horizontal, 10)
+            .background(Color.white.opacity(0.08))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+
+        case .installing:
+            HStack(spacing: 8) {
+                ProgressView()
+                    .progressViewStyle(.circular)
+                    .scaleEffect(0.6)
+                    .frame(width: 20)
+                Text("Installing…")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 8)
+            .padding(.horizontal, 10)
+            .background(Color.white.opacity(0.08))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+
+        case .failed(let msg):
+            bannerRow(
+                icon: "exclamationmark.circle",
+                text: msg,
+                action: { updater.retry() },
+                actionLabel: "Retry"
+            )
+
+        default:
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private func bannerRow(icon: String, text: String, action: @escaping () -> Void, actionLabel: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .bold))
+            Text(text)
+                .font(.system(size: 11, weight: .semibold))
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button(actionLabel, action: action)
+                .font(.system(size: 11, weight: .black))
+                .buttonStyle(.plain)
+                .padding(.vertical, 4)
+                .padding(.horizontal, 8)
+                .background(Color.white)
+                .foregroundStyle(Color.black)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+        }
+        .foregroundStyle(Color.white)
+        .padding(.vertical, 8)
+        .padding(.horizontal, 10)
+        .background(Color.white.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }
 
