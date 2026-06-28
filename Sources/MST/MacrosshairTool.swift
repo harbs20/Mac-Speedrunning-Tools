@@ -116,6 +116,7 @@ final class MacrosshairController: ObservableObject {
 
     private var overlayWindow: NSWindow?
     private var crosshairView: CrosshairView?
+    private var overlayScreenID: CGDirectDisplayID?
 
     func toggleTool() {
         isEnabled ? stop() : start()
@@ -123,7 +124,7 @@ final class MacrosshairController: ObservableObject {
 
     func start() {
         isEnabled = true
-        setVisible(false)
+        setVisible(true)
     }
 
     func stop() {
@@ -141,24 +142,17 @@ final class MacrosshairController: ObservableObject {
     }
 
     func toggleVisibility() {
-        guard isEnabled else { return }
+        guard isEnabled else {
+            start()
+            return
+        }
         setVisible(!isVisible)
     }
 
     private func show() {
-        if overlayWindow == nil {
-            let frame = NSScreen.main?.frame ?? CGRect(x: 0, y: 0, width: 1200, height: 800)
-            let view = CrosshairView(frame: frame, settings: settings)
-            let window = NSWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false)
-            window.backgroundColor = .clear
-            window.isOpaque = false
-            window.level = .screenSaver
-            window.ignoresMouseEvents = true
-            window.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
-            window.contentView = view
-            settings.view = view
-            overlayWindow = window
-            crosshairView = view
+        guard let screen = Self.screen(containing: NSEvent.mouseLocation) else { return }
+        if overlayWindow == nil || overlayScreenID != Self.displayID(for: screen) {
+            rebuildOverlay(on: screen)
         }
         overlayWindow?.orderFrontRegardless()
         isVisible = true
@@ -167,5 +161,33 @@ final class MacrosshairController: ObservableObject {
     private func hide() {
         overlayWindow?.orderOut(nil)
         isVisible = false
+    }
+
+    private func rebuildOverlay(on screen: NSScreen) {
+        overlayWindow?.orderOut(nil)
+
+        let frame = screen.frame
+        let view = CrosshairView(frame: NSRect(origin: .zero, size: frame.size), settings: settings)
+        let window = NSWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window.backgroundColor = .clear
+        window.isOpaque = false
+        window.level = .screenSaver
+        window.ignoresMouseEvents = true
+        window.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
+        window.contentView = view
+        settings.view = view
+        overlayWindow = window
+        crosshairView = view
+        overlayScreenID = Self.displayID(for: screen)
+    }
+
+    private static func screen(containing point: NSPoint) -> NSScreen? {
+        NSScreen.screens.first { NSMouseInRect(point, $0.frame, false) }
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
+    }
+
+    private static func displayID(for screen: NSScreen) -> CGDirectDisplayID? {
+        screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
     }
 }

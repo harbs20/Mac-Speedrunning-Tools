@@ -101,6 +101,8 @@ final class ToolKeybindStore: ObservableObject {
     }
 
     private func installEventTap() {
+        removeEventTap()
+
         let mask = CGEventMask(1 << CGEventType.keyDown.rawValue)
         let userData = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
         guard let tap = CGEvent.tapCreate(
@@ -109,7 +111,19 @@ final class ToolKeybindStore: ObservableObject {
             options: .listenOnly,
             eventsOfInterest: mask,
             callback: { _, type, event, userData in
-                guard type == .keyDown, let userData else {
+                guard let userData else {
+                    return Unmanaged.passUnretained(event)
+                }
+
+                if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                    Task { @MainActor in
+                        let store = Unmanaged<ToolKeybindStore>.fromOpaque(userData).takeUnretainedValue()
+                        store.enableEventTap()
+                    }
+                    return Unmanaged.passUnretained(event)
+                }
+
+                guard type == .keyDown else {
                     return Unmanaged.passUnretained(event)
                 }
 
@@ -134,6 +148,23 @@ final class ToolKeybindStore: ObservableObject {
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
         needsAccessibilityPermission = false
+    }
+
+    private func enableEventTap() {
+        guard let eventTap else {
+            installEventTap()
+            return
+        }
+
+        CGEvent.tapEnable(tap: eventTap, enable: true)
+    }
+
+    private func removeEventTap() {
+        if let eventTapSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), eventTapSource, .commonModes)
+        }
+        eventTapSource = nil
+        eventTap = nil
     }
 
     private func promptForAccessibilityPermission() {
